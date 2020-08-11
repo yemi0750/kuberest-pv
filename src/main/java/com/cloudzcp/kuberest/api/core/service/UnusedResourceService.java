@@ -21,6 +21,11 @@ public class UnusedResourceService {
     private static KubernetesClient client = new DefaultKubernetesClient();
     private static FileWriter file;
 
+    private static String apiurl = "api/v1/unused";
+    private static String apiurl_ns = "api/v1/unused/ns/";
+    private static String apiurl_pvcs = "api/v1/unused/pvcs";
+    private static String apiurl_pvs = "api/v1/unused/pvs";
+
     public JSONObject getPVCList(PersistentVolumeClaimList pvc_list, Boolean count) {
 
         JSONObject pvc_object_count = new JSONObject();
@@ -96,8 +101,9 @@ public class UnusedResourceService {
 
         PersistentVolumeClaimList pvc_list;
         PersistentVolumeList pv_list;
+        mountedByPods = findAllPVCMountedByPod();
 
-        data.put("selfLink", "api/v1/unused");
+        data.put("selfLink", apiurl);
         pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
         pv_list = client.persistentVolumes().list();
 
@@ -118,8 +124,9 @@ public class UnusedResourceService {
         JSONObject response = new JSONObject();
 
         PersistentVolumeClaimList pvc_list;
+        mountedByPods = findAllPVCMountedByPod();
 
-        data.put("selfLink", "api/v1/unused/ns/"+namespace);
+        data.put("selfLink", apiurl_ns+namespace);
         pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
 
         pvc_object = getPVCList(pvc_list, count);
@@ -136,8 +143,9 @@ public class UnusedResourceService {
         JSONObject response = new JSONObject();
 
         PersistentVolumeClaimList pvc_list;
+        mountedByPods = findAllPVCMountedByPod();
 
-        data.put("selfLink", "api/v1/unused/pvcs");
+        data.put("selfLink", apiurl_pvcs);
         pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
 
         pvc_object = getPVCList(pvc_list, false);
@@ -153,8 +161,9 @@ public class UnusedResourceService {
         JSONObject response = new JSONObject();
 
         PersistentVolumeClaimList pvc_list;
+        mountedByPods = findAllPVCMountedByPod();
 
-        data.put("selfLink", "api/v1/unused/ns/"+namespace+"/pvcs");
+        data.put("selfLink", apiurl_ns+namespace+"/pvcs");
         pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
 
         pvc_object = getPVCList(pvc_list, false);
@@ -170,6 +179,7 @@ public class UnusedResourceService {
         JSONObject response = new JSONObject();
 
         PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(name).get();
+        mountedByPods = findAllPVCMountedByPod();
 
         if (pvc == null) {
 
@@ -183,7 +193,7 @@ public class UnusedResourceService {
             data.put("PVC", pvc_object);
         }
 
-        data.put("selfLink", "api/v1/unused/ns/"+namespace+"/pvcs/"+name);
+        data.put("selfLink", apiurl_ns+namespace+"/pvcs/"+name);
         response.put("data", data);
         return response;
     }
@@ -195,8 +205,9 @@ public class UnusedResourceService {
         JSONObject response = new JSONObject();
 
         PersistentVolumeList pv_list;
+        mountedByPods = findAllPVCMountedByPod();
 
-        data.put("selfLink", "api/v1/unused/pvs");
+        data.put("selfLink", apiurl_pvs);
         pv_list = client.persistentVolumes().list();
 
         pv_object = getPVList(pv_list, false);
@@ -212,6 +223,7 @@ public class UnusedResourceService {
         JSONObject response = new JSONObject();
 
         PersistentVolume pv = client.persistentVolumes().withName(name).get();
+        mountedByPods = findAllPVCMountedByPod();
 
         if (pv == null) {
 
@@ -225,7 +237,7 @@ public class UnusedResourceService {
             data.put("PVC", pv_object);
         }
 
-        data.put("selfLink", "api/v1/unused/pvs/"+name);
+        data.put("selfLink", apiurl_pvs+"/"+name);
         response.put("data", data);
         return response;
     }
@@ -275,6 +287,7 @@ public class UnusedResourceService {
     }
 
     public Boolean isMountedByPod(String claimName, String namespace){
+
         Boolean result = false;
 
         if (!mountedByPods.isEmpty()) {
@@ -294,9 +307,12 @@ public class UnusedResourceService {
     }
 
     public Boolean isUnused(PersistentVolume pv, PersistentVolumeClaim pvc) {
+
         Boolean result = false;
+
         if (pv != null) {
-            if (pv.getStatus().getPhase().equals("Terminating")) {
+            if (pv.getMetadata().getDeletionTimestamp() != null) {
+                //terminating
                 return false;
             }
             if (!pv.getStatus().getPhase().equals("Bound")) {
@@ -310,7 +326,8 @@ public class UnusedResourceService {
                 }
             }
         } else if (pvc != null) {
-            if (pvc.getStatus().getPhase().equals("Terminating")){
+            if (pvc.getMetadata().getDeletionTimestamp() != null){
+                //terminating
                 return false;
             }
             if (!isMountedByPod(pvc.getMetadata().getName(), pvc.getMetadata().getNamespace())){
@@ -324,7 +341,9 @@ public class UnusedResourceService {
     }
 
     public String checkUnusedType(PersistentVolume pv, PersistentVolumeClaim pvc) {
+
         String result = "";
+
         if (pv != null) {
             if (!pv.getStatus().getPhase().equals("Bound")) {
                 return "PV Status is not 'Bound'";
@@ -348,7 +367,9 @@ public class UnusedResourceService {
     }
 
     public void createJSONFile(JSONObject obj, String filename){
+
         String home = System.getProperty("user.home");
+
         try {
             file = new FileWriter(home + "/Downloads/" + filename + ".json");
             file.write(obj.toJSONString());

@@ -9,12 +9,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping("/api/v1/unused")
 public class DevController {
     
     @Autowired private UnusedResourceService unusedResourceService;
 
-    @GetMapping(value = "unused/pods")
+    @GetMapping(value = "pods")
     public JSONObject getMountedPod() {
         JSONObject result = unusedResourceService.printPVCMountedByPod();
         return result;
