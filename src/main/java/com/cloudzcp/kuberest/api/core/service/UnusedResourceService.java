@@ -20,61 +20,46 @@ public class UnusedResourceService {
     private JSONArray mountedByPods = findAllPVCMountedByPod();
     private static KubernetesClient client = new DefaultKubernetesClient();
     private static FileWriter file;
-    private static PersistentVolumeClaimList pvc_list;
-    private static PersistentVolumeList pv_list;
-    private static JSONObject data;
-    private static JSONObject response;
 
-    public JSONObject countAll(String namespace){
-
-        JSONObject pvc_object_count = new JSONObject();
-        JSONObject pv_object_count = new JSONObject();
-        JSONObject pvc_object = new JSONObject();
-        JSONObject pv_object = new JSONObject();
-        data = new JSONObject();
-        response = new JSONObject();
-
-        if (namespace != null) {
-            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
-            data.put("selfLink", "api/v1/unused/ns/"+namespace+"/count");
-        } else {
-            pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
-            pv_list = client.persistentVolumes().list();
-            data.put("selfLink", "api/v1/unused/count");
-
-            pv_object_count.put("total", pv_list.getItems().size());
-            pv_object_count.put("unused", pv_list.getItems().stream().filter(pv -> isUnused(pv, null)).count());
-            pv_object.put("count", pv_object_count);
-            data.put("PV", pv_object);
-        }
-
-        pvc_object_count.put("total", pvc_list.getItems().size());
-        pvc_object_count.put("unused", pvc_list.getItems().stream().filter(pvc -> isUnused(null, pvc)).count());
-        pvc_object.put("count", pvc_object_count);
-        data.put("PVC", pvc_object);
-        response.put("data", data);
-        return response;
-    }
-
-    public JSONObject findAll(String namespace){
+    public JSONObject getPVCList(PersistentVolumeClaimList pvc_list, Boolean count) {
 
         JSONObject pvc_object_count = new JSONObject();
         JSONArray pvc_object_list = new JSONArray();
         JSONObject pvc_object = new JSONObject();
+
+        if (count == null || !count) {
+            pvc_list.getItems().forEach(
+                pvc -> {
+                    if(isUnused(null, pvc)){
+                        JSONObject object = new JSONObject();
+                        object.put("name", pvc.getMetadata().getName());
+                        object.put("namespace", pvc.getMetadata().getNamespace());
+                        object.put("status", pvc.getStatus().getPhase());
+                        object.put("boundedPV", pvc.getSpec().getVolumeName());
+                        object.put("storageClassName", pvc.getSpec().getStorageClassName());
+                        object.put("unusedType", checkUnusedType(null, pvc));
+                        pvc_object_list.add(object);
+                    }
+                }
+            );
+            pvc_object.put("unusedList", pvc_object_list);
+        }
+        if (count == null || count) {
+            pvc_object_count.put("total", pvc_list.getItems().size());
+            pvc_object_count.put("unused", pvc_list.getItems().stream().filter(pvc -> isUnused(null, pvc)).count());
+            pvc_object.put("count", pvc_object_count);
+        }
+
+        return pvc_object;
+    }
+
+    public JSONObject getPVList(PersistentVolumeList pv_list, Boolean count) {
+
         JSONObject pv_object_count = new JSONObject();
         JSONArray pv_object_list = new JSONArray();
         JSONObject pv_object = new JSONObject();
-        data = new JSONObject();
-        response = new JSONObject();
 
-        if (namespace != null) {
-            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
-            data.put("selfLink", "api/v1/unused/ns/"+namespace);
-        } else {
-            pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
-            pv_list = client.persistentVolumes().list();
-            data.put("selfLink", "api/v1/unused");
-
+        if (count == null || !count) {
             pv_list.getItems().forEach(
                 pv -> {
                     if(isUnused(pv, null)){
@@ -84,75 +69,95 @@ public class UnusedResourceService {
                         object.put("volumeReclaimPolicy", pv.getSpec().getPersistentVolumeReclaimPolicy());
                         object.put("storageClassName", pv.getSpec().getStorageClassName());
                         object.put("unusedType", checkUnusedType(pv, null));
+                        if (pv.getSpec().getClaimRef() != null) {
+                            object.put("boundedPVC", pv.getSpec().getClaimRef().getName());
+                        }
                         pv_object_list.add(object);
                     }
                 }
             );
+            pv_object.put("unusedList", pv_object_list);
+        }
+        if (count == null || count) {
             pv_object_count.put("total", pv_list.getItems().size());
             pv_object_count.put("unused", pv_list.getItems().stream().filter(pv -> isUnused(pv, null)).count());
             pv_object.put("count", pv_object_count);
-            pv_object.put("unusedList", pv_object_list);
-
-            data.put("PV", pv_object);
         }
 
-        pvc_list.getItems().forEach(
-            pvc -> {
-                if(isUnused(null, pvc)){
-                    JSONObject object = new JSONObject();
-                    object.put("name", pvc.getMetadata().getName());
-                    object.put("namespace", pvc.getMetadata().getNamespace());
-                    object.put("status", pvc.getStatus().getPhase());
-                    object.put("volume", pvc.getSpec().getVolumeName());
-                    object.put("storageClassName", pvc.getSpec().getStorageClassName());
-                    object.put("unusedType", checkUnusedType(null, pvc));
-                    pvc_object_list.add(object);
-                }
-            }
-        );
-        pvc_object_count.put("total", pvc_list.getItems().size());
-        pvc_object_count.put("unused", pvc_list.getItems().stream().filter(pvc -> isUnused(null, pvc)).count());
-        pvc_object.put("count", pvc_object_count);
-        pvc_object.put("unusedList", pvc_object_list);
+        return pv_object;
+    }
+    
+    public JSONObject findAll(Boolean count){
 
+        JSONObject pvc_object = new JSONObject();
+        JSONObject pv_object = new JSONObject();
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+
+        PersistentVolumeClaimList pvc_list;
+        PersistentVolumeList pv_list;
+
+        data.put("selfLink", "api/v1/unused");
+        pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
+        pv_list = client.persistentVolumes().list();
+
+        pv_object = getPVList(pv_list, count);
+        data.put("PV", pv_object);
+
+        pvc_object = getPVCList(pvc_list, count);
         data.put("PVC", pvc_object);
         response.put("data", data);
 
         return response;
     }
 
-    public JSONObject findPVC(String namespace){
+    public JSONObject findAll(String namespace, Boolean count){
 
-        JSONArray pvc_object_list = new JSONArray();
         JSONObject pvc_object = new JSONObject();
-        data = new JSONObject();
-        response = new JSONObject();
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
 
-        if (namespace != null) {
-            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
-            data.put("selfLink", "api/v1/unused/ns/"+namespace+"/pvcs");
-            
-        } else {
-            pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
-            data.put("selfLink", "api/v1/unused/pvcs");
-        }
+        PersistentVolumeClaimList pvc_list;
 
-        pvc_list.getItems().forEach(
-            pvc -> {
-                if(isUnused(null, pvc)){
-                    JSONObject object = new JSONObject();
-                    object.put("name", pvc.getMetadata().getName());
-                    object.put("namespace", pvc.getMetadata().getNamespace());
-                    object.put("status", pvc.getStatus().getPhase());
-                    object.put("boundedPV", pvc.getSpec().getVolumeName());
-                    object.put("storageClassName", pvc.getSpec().getStorageClassName());
-                    object.put("unusedType", checkUnusedType(null, pvc));
-                    pvc_object_list.add(object);
-                }
-            }
-        );
+        data.put("selfLink", "api/v1/unused/ns/"+namespace);
+        pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
 
-        pvc_object.put("unusedList", pvc_object_list);
+        pvc_object = getPVCList(pvc_list, count);
+        data.put("PVC", pvc_object);
+        response.put("data", data);
+
+        return response;
+    }
+
+    public JSONObject findPVCList(){
+
+        JSONObject pvc_object = new JSONObject();
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+
+        PersistentVolumeClaimList pvc_list;
+
+        data.put("selfLink", "api/v1/unused/pvcs");
+        pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
+
+        pvc_object = getPVCList(pvc_list, false);
+        data.put("PVC", pvc_object);
+        response.put("data", data);
+        return response;
+    }
+
+    public JSONObject findPVCList(String namespace){
+
+        JSONObject pvc_object = new JSONObject();
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+
+        PersistentVolumeClaimList pvc_list;
+
+        data.put("selfLink", "api/v1/unused/ns/"+namespace+"/pvcs");
+        pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
+
+        pvc_object = getPVCList(pvc_list, false);
         data.put("PVC", pvc_object);
         response.put("data", data);
         return response;
@@ -161,8 +166,8 @@ public class UnusedResourceService {
     public JSONObject findPVC(String namespace, String name){
 
         JSONObject pvc_object = new JSONObject();
-        data = new JSONObject();
-        response = new JSONObject();
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
 
         PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(name).get();
 
@@ -183,32 +188,18 @@ public class UnusedResourceService {
         return response;
     }
 
-    public JSONObject findPV(){
-        
-        JSONArray pv_object_list = new JSONArray();
+    public JSONObject findPVList(){
+
         JSONObject pv_object = new JSONObject();
-        data = new JSONObject();
-        response = new JSONObject();
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+
+        PersistentVolumeList pv_list;
 
         data.put("selfLink", "api/v1/unused/pvs");
-        client.persistentVolumes().list().getItems().forEach(
-            pv -> {
-                if(isUnused(pv, null)){
-                    JSONObject object = new JSONObject();
-                    object.put("name", pv.getMetadata().getName());
-                    object.put("status", pv.getStatus().getPhase());
-                    object.put("volumeReclaimPolicy", pv.getSpec().getPersistentVolumeReclaimPolicy());
-                    object.put("storageClassName", pv.getSpec().getStorageClassName());
-                    object.put("unusedType", checkUnusedType(pv, null));
-                    if (pv.getSpec().getClaimRef() != null) {
-                        object.put("boundedPVC", pv.getSpec().getClaimRef().getName());
-                    }
-                    pv_object_list.add(object);
-                }
-            }
-        );
+        pv_list = client.persistentVolumes().list();
 
-        pv_object.put("unusedList", pv_object_list);
+        pv_object = getPVList(pv_list, false);
         data.put("PV", pv_object);
         response.put("data", data);
         return response;
@@ -217,8 +208,8 @@ public class UnusedResourceService {
     public JSONObject findPV(String name){
         
         JSONObject pv_object = new JSONObject();
-        data = new JSONObject();
-        response = new JSONObject();
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
 
         PersistentVolume pv = client.persistentVolumes().withName(name).get();
 
@@ -274,8 +265,8 @@ public class UnusedResourceService {
     }
 
     public JSONObject printPVCMountedByPod(){
-        data = new JSONObject();
-        response = new JSONObject();
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
 
         data.put("PodSpecMountVolume", mountedByPods);
         response.put("data", data);
