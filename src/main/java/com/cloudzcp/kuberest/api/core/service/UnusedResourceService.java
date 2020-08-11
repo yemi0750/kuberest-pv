@@ -92,7 +92,7 @@ public class UnusedResourceService {
         return pv_object;
     }
     
-    public JSONObject findAll(Boolean count){
+    public JSONObject findAll(Boolean count, String deleteList){
 
         JSONObject pvc_object = new JSONObject();
         JSONObject pv_object = new JSONObject();
@@ -104,8 +104,13 @@ public class UnusedResourceService {
         mountedByPods = findAllPVCMountedByPod();
 
         data.put("selfLink", apiurl);
-        pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
-        pv_list = client.persistentVolumes().list();
+        if (deleteList != null) {
+            pvc_list = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", deleteList).list();
+            pv_list = client.persistentVolumes().withLabel("unused-delete-list", deleteList).list();
+        } else {
+            pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
+            pv_list = client.persistentVolumes().list();
+        }
 
         pv_object = getPVList(pv_list, count);
         data.put("PV", pv_object);
@@ -117,7 +122,7 @@ public class UnusedResourceService {
         return response;
     }
 
-    public JSONObject findAll(String namespace, Boolean count){
+    public JSONObject findAll(String namespace, Boolean count, String deleteList){
 
         JSONObject pvc_object = new JSONObject();
         JSONObject data = new JSONObject();
@@ -127,7 +132,11 @@ public class UnusedResourceService {
         mountedByPods = findAllPVCMountedByPod();
 
         data.put("selfLink", apiurl_ns+namespace);
-        pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
+        if (deleteList != null) {
+            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", deleteList).list();
+        } else {
+            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
+        }
 
         pvc_object = getPVCList(pvc_list, count);
         data.put("PVC", pvc_object);
@@ -136,7 +145,7 @@ public class UnusedResourceService {
         return response;
     }
 
-    public JSONObject findPVCList(){
+    public JSONObject findPVCList(String deleteList){
 
         JSONObject pvc_object = new JSONObject();
         JSONObject data = new JSONObject();
@@ -146,7 +155,11 @@ public class UnusedResourceService {
         mountedByPods = findAllPVCMountedByPod();
 
         data.put("selfLink", apiurl_pvcs);
-        pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
+        if (deleteList != null) {
+            pvc_list = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", deleteList).list();
+        } else {
+            pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
+        }
 
         pvc_object = getPVCList(pvc_list, false);
         data.put("PVC", pvc_object);
@@ -154,7 +167,7 @@ public class UnusedResourceService {
         return response;
     }
 
-    public JSONObject findPVCList(String namespace){
+    public JSONObject findPVCList(String namespace, String deleteList){
 
         JSONObject pvc_object = new JSONObject();
         JSONObject data = new JSONObject();
@@ -164,7 +177,11 @@ public class UnusedResourceService {
         mountedByPods = findAllPVCMountedByPod();
 
         data.put("selfLink", apiurl_ns+namespace+"/pvcs");
-        pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
+        if (deleteList != null) {
+            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", deleteList).list();
+        } else {
+            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
+        }
 
         pvc_object = getPVCList(pvc_list, false);
         data.put("PVC", pvc_object);
@@ -198,7 +215,7 @@ public class UnusedResourceService {
         return response;
     }
 
-    public JSONObject findPVList(){
+    public JSONObject findPVList(String deleteList){
 
         JSONObject pv_object = new JSONObject();
         JSONObject data = new JSONObject();
@@ -208,7 +225,11 @@ public class UnusedResourceService {
         mountedByPods = findAllPVCMountedByPod();
 
         data.put("selfLink", apiurl_pvs);
-        pv_list = client.persistentVolumes().list();
+        if (deleteList != null) {
+            pv_list = client.persistentVolumes().withLabel("unused-delete-list", deleteList).list();
+        } else {
+            pv_list = client.persistentVolumes().list();
+        }
 
         pv_object = getPVList(pv_list, false);
         data.put("PV", pv_object);
@@ -237,7 +258,7 @@ public class UnusedResourceService {
             data.put("PVC", pv_object);
         }
 
-        data.put("selfLink", apiurl_pvs+"/"+name);
+        data.put("selfLink", apiurl_pvs+name);
         response.put("data", data);
         return response;
     }
@@ -277,6 +298,7 @@ public class UnusedResourceService {
     }
 
     public JSONObject printPVCMountedByPod(){
+
         JSONObject data = new JSONObject();
         JSONObject response = new JSONObject();
 
@@ -384,5 +406,284 @@ public class UnusedResourceService {
             }
         }
         
+    }
+
+    public JSONObject deleteUnusedPVC(String namespace, String pvc_name) {
+
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+        String result = pvc_name+" is used resource";
+
+        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).get();
+        mountedByPods = findAllPVCMountedByPod();
+
+        if (pvc == null) {
+            result = pvc_name+" not found";
+        }
+        if (isUnused(null, pvc)){
+            if (client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).delete()) {
+                result = "deleted";
+            } else {
+                result = "failed";
+            }
+        }
+
+        data.put("name", pvc_name);
+        data.put("result", result);
+        response.put("data", data);
+        return response;
+    }
+
+    public JSONObject deleteUnusedPV(String pv_name) {
+
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+        String result = pv_name+" is used resource";
+
+        PersistentVolume pv = client.persistentVolumes().withName(pv_name).get();
+        mountedByPods = findAllPVCMountedByPod();
+
+        if (pv == null) {
+            result = pv_name+" not found";
+        }
+        if (isUnused(pv, null)){
+            if (client.persistentVolumes().withName(pv_name).delete()) {
+                result = "deleted";
+            } else {
+                result = "failed";
+            }
+        }
+
+        data.put("name", pv_name);
+        data.put("result", result);
+        response.put("data", data);
+        return response;
+    }
+
+    public String checkUnusedDeleteListLabel(PersistentVolume pv, PersistentVolumeClaim pvc) {
+
+        String result = "";
+
+        if (pv != null) {
+            if (pv.getMetadata().getLabels() == null) {
+                return "null";
+            } else {
+                result = pv.getMetadata().getLabels().get("unused-delete-list");
+            }
+        } else if (pvc != null) {
+            if (pvc.getMetadata().getLabels() == null) {
+                return "null";
+            } else {
+                result = pvc.getMetadata().getLabels().get("unused-delete-list");
+            }
+        }
+
+        return (result == null) ? "null" : result;
+    }
+
+    public JSONObject putLabelOnUnusedPVC(String namespace, String pvc_name, String type) {
+
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+        String result = "";
+
+        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).get();
+        mountedByPods = findAllPVCMountedByPod();
+
+        if (pvc == null) {
+            result = pvc_name+" not found";
+        } else if (!isUnused(null, pvc)){
+            result = pvc_name+" is used resource";
+        } else {
+            if (type.equals("exclude")) {
+                if (checkUnusedDeleteListLabel(null, pvc).equals("exclude")) {
+                    result = "Already excluded";
+                } else {
+                    pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "exclude").endMetadata().done();
+                    if (checkUnusedDeleteListLabel(null, pvc).equals("exclude")) {
+                        result = "excluded";
+                    } else {
+                        result = "failed";
+                    }
+                }
+            } else if (type.equals("include")) {
+                if (checkUnusedDeleteListLabel(null, pvc).equals("exclude")) {
+                    result = "Can't include "+pvc_name+" / "+pvc_name+" is excluded";
+                } else if (checkUnusedDeleteListLabel(null, pvc).equals("include")) {
+                    result = "Already included";
+                } else {
+                    pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "include").endMetadata().done();
+                    if (checkUnusedDeleteListLabel(null, pvc).equals("include")) {
+                        result = "included";
+                    } else {
+                        result = "failed";
+                    }
+                }
+            } else if (type.equals("release")) {
+                if (checkUnusedDeleteListLabel(null, pvc).equals("release")) {
+                    result = "Already included";
+                } else {
+                    pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).edit().editMetadata().removeFromLabels("unused-delete-list").endMetadata().done();
+                    if (checkUnusedDeleteListLabel(null, pvc).equals("null")) {
+                        result = "released";
+                    } else {
+                        result = "failed";
+                    }
+                }
+                
+            } else {
+                result = "bad request / type = [ exclude / include / release ]";
+            }
+        }
+        
+        data.put("selfLink", apiurl_ns+namespace+"/pvcs/"+pvc_name);
+        data.put("result", result);
+        response.put("data", data);
+        return response;
+    }
+
+    public JSONObject putLabelOnUnusedPV(String pv_name, String type) {
+
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+        String result = "";
+        PersistentVolume pv = client.persistentVolumes().withName(pv_name).get();
+        mountedByPods = findAllPVCMountedByPod();
+
+        if (pv == null) {
+            result = pv_name+" not found";
+        } else if (!isUnused(pv, null)){
+            result = pv_name+" is used resource";
+        } else {
+            if (type.equals("exclude")) {
+                if (checkUnusedDeleteListLabel(pv, null).equals("exclude")) {
+                    result = "Already excluded";
+                } else {
+                    pv = client.persistentVolumes().withName(pv_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "exclude").endMetadata().done();
+                    if (checkUnusedDeleteListLabel(pv, null).equals("exclude")) {
+                        result = "excluded";
+                    } else {
+                        result = "failed";
+                    }
+                }
+            } else if (type.equals("include")) {
+                if (checkUnusedDeleteListLabel(pv, null).equals("exclude")) {
+                    result = "Can't include "+pv_name+" / "+pv_name+" is excluded";
+                } else if (checkUnusedDeleteListLabel(pv, null).equals("include")) {
+                    result = "Already included";
+                } else {
+                    pv = client.persistentVolumes().withName(pv_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "include").endMetadata().done();
+                    if (checkUnusedDeleteListLabel(pv, null).equals("include")) {
+                        result = "included";
+                    } else {
+                        result = "failed";
+                    }
+                }
+            } else if (type.equals("release")) {
+                if (checkUnusedDeleteListLabel(pv, null).equals("release")) {
+                    result = "Already included";
+                } else {
+                    pv = client.persistentVolumes().withName(pv_name).edit().editMetadata().removeFromLabels("unused-delete-list").endMetadata().done();
+                    if (checkUnusedDeleteListLabel(pv, null).equals("null")) {
+                        result = "released";
+                    } else {
+                        result = "failed";
+                    }
+                }
+                
+            } else {
+                result = "bad request / type = [ exclude / include / release ]";
+            }
+        }
+
+        data.put("selfLink", apiurl_pvs+pv_name);
+        data.put("result", result);
+        response.put("data", data);
+        return response;
+    }
+
+    public JSONObject deleteUnusedAllScript(String type) {
+
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+
+        String command = "kubectl delete "+type+" -l=unused-delete-list=include";
+
+        data.put("command", command);
+        response.put("data", data);
+
+        return response;
+    }
+
+    public JSONObject deleteUnusedAll() {
+
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+        String result_pvc = "";
+        String result_pv = "";
+        String result = "";
+
+        result_pvc = ((JSONObject)deleteUnusedPVC().get("data")).get("result").toString();
+        if (!result_pvc.equals("deleted")) {
+            result = "PVC / " + result_pvc;
+        } else {
+            result_pv = ((JSONObject)deleteUnusedPV().get("data")).get("result").toString();
+            if (!result_pv.equals("deleted")) {
+                result = "PV / " + result_pv;
+            } else {
+                result = "deleted";
+            }
+        }
+
+        data.put("result", result);
+        response.put("data", data);
+
+        return response;
+    }
+
+    public JSONObject deleteUnusedPVC() {
+
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+        String result = "";
+
+        int size = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", "include").list().getItems().size();
+        if (size > 0) {
+            if (client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", "include").delete()) {
+                result = "deleted";
+            } else {
+                result = "failed";
+            }
+        } else {
+            result = "No results found. Please add unused-delete-list PVC";
+        }
+
+        data.put("result", result);
+        response.put("data", data);
+
+        return response;
+    }
+
+    public JSONObject deleteUnusedPV() {
+
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+        String result = "";
+
+        int size = client.persistentVolumes().withLabel("unused-delete-list", "include").list().getItems().size();
+        if (size > 0) {
+            if (client.persistentVolumes().withLabel("unused-delete-list", "include").delete()) {
+                result = "deleted";
+            } else {
+                result = "failed";
+            }
+        } else {
+            result = "No results found. Please add unused-delete-list PV";
+        }
+
+        data.put("result", result);
+        response.put("data", data);
+
+        return response;
     }
 }
