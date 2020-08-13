@@ -19,26 +19,26 @@ public class UnusedResourceController {
     @Autowired private UnusedResourceService unusedResourceService;
 
     @GetMapping
-    public JSONObject getUnusedResourceList(@RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList) {
-        JSONObject result = unusedResourceService.findAll(count, deleteList);
+    public JSONObject getUnusedResourceList(@RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+        JSONObject result = unusedResourceService.findAll(count, deleteList, storageclassname, status, label);
         return result;
     }
 
     @GetMapping(value = "ns/{namespace}")
-    public JSONObject getUnusedResourceListInNamespace(@PathVariable String namespace, @RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList) {
-        JSONObject result = unusedResourceService.findAll(namespace, count, deleteList);
+    public JSONObject getUnusedResourceListInNamespace(@PathVariable String namespace, @RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+        JSONObject result = unusedResourceService.findAll(namespace, count, deleteList, storageclassname, status, label);
         return result;
     }
 
     @GetMapping(value = "pvcs")
-    public JSONObject getUnusedPVCList(@RequestParam(required = false)String deleteList) {
-        JSONObject result = unusedResourceService.findPVCList(deleteList);
+    public JSONObject getUnusedPVCList(@RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+        JSONObject result = unusedResourceService.findPVCList(deleteList, storageclassname, status, label);
         return result;
     }
 
     @GetMapping(value = "ns/{namespace}/pvcs")
-    public JSONObject getUnusedPVCListInNamespace(@PathVariable String namespace, @RequestParam(required = false)String deleteList) {
-        JSONObject result = unusedResourceService.findPVCList(namespace, deleteList);
+    public JSONObject getUnusedPVCListInNamespace(@PathVariable String namespace, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+        JSONObject result = unusedResourceService.findPVCList(namespace, deleteList, storageclassname, status, label);
         return result;
     }
 
@@ -49,8 +49,8 @@ public class UnusedResourceController {
     }
 
     @GetMapping(value = "pvs")
-    public JSONObject getUnusedPVList(@RequestParam(required = false)String deleteList) {
-        JSONObject result = unusedResourceService.findPVList(deleteList);
+    public JSONObject getUnusedPVList(@RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+        JSONObject result = unusedResourceService.findPVList(deleteList, storageclassname, status, label);
         return result;
     }
 
@@ -69,6 +69,30 @@ public class UnusedResourceController {
     @DeleteMapping(value = "pvs/{pv_name}")
     public JSONObject deleteUnusedPV(@PathVariable String pv_name){
         JSONObject result = unusedResourceService.deleteUnusedPV(pv_name);
+        return result;
+    }
+
+    @PutMapping
+    public JSONObject putLabelOnUnusedAll(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+        JSONObject result = unusedResourceService.putLabelOnUnusedAll(type, storageclassname, status, label);
+        return result;
+    }
+
+    @PutMapping(value = "ns/{namespace}/pvcs")
+    public JSONObject putLabelOnUnusedPVCInNamespace(@PathVariable String namespace, @RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+        JSONObject result = unusedResourceService.putLabelOnUnusedPVCList(namespace, type, storageclassname, status, label);
+        return result;
+    }
+
+    @PutMapping(value = "pvcs")
+    public JSONObject putLabelOnUnusedPVC(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+        JSONObject result = unusedResourceService.putLabelOnUnusedPVCList(type, storageclassname, status, label);
+        return result;
+    }
+    
+    @PutMapping(value = "pvs")
+    public JSONObject putLabelOnUnusedPVList(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+        JSONObject result = unusedResourceService.putLabelOnUnusedPVList(type, storageclassname, status, label);
         return result;
     }
 
@@ -104,6 +128,18 @@ public class UnusedResourceController {
             result = unusedResourceService.deleteUnusedPVC();
         } else {
             result = unusedResourceService.deleteUnusedAllScript("pvc");
+        }
+        return result;
+    }
+
+    @DeleteMapping(value = "ns/{namespace}/pvcs")
+    public JSONObject deleteUnusedPVCListInNamespace(@PathVariable String namespace, @RequestParam(required = false)Boolean script) {
+        JSONObject result;
+
+        if (script == null || !script) {
+            result = unusedResourceService.deleteUnusedPVC(namespace);
+        } else {
+            result = unusedResourceService.deleteUnusedAllScript("pvc", namespace);
         }
         return result;
     }
