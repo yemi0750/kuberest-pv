@@ -1,5 +1,7 @@
 package com.cloudzcp.kuberest.api.core.controller;
 
+import java.io.IOException;
+
 import com.cloudzcp.kuberest.api.core.service.UnusedResourceService;
 
 import org.json.simple.JSONObject;
@@ -7,16 +9,25 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/v1/unused")
 public class UnusedResourceController {
 
     @Autowired private UnusedResourceService unusedResourceService;
+
+    @PostMapping(value = "config", consumes = { "multipart/form-data" })
+    public JSONObject setConfig(@RequestPart MultipartFile file) throws IOException {
+        JSONObject result = unusedResourceService.setConfig(file);
+        return result;
+    }
 
     @GetMapping
     public JSONObject getUnusedResourceList(@RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {

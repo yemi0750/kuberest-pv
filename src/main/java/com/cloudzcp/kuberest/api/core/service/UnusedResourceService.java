@@ -7,11 +7,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import io.fabric8.kubernetes.api.model.PersistentVolume;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaimList;
 import io.fabric8.kubernetes.api.model.PersistentVolumeList;
+import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClient;
 
@@ -25,6 +27,20 @@ public class UnusedResourceService {
     private static String apiurl_pvcs = "api/v1/unused/pvcs";
     private static String apiurl_pvs = "api/v1/unused/pvs";
 
+    public JSONObject setConfig(MultipartFile conf) throws IOException {
+
+        JSONObject data = new JSONObject();
+        JSONObject response = new JSONObject();
+    
+        String content = new String(conf.getBytes());
+        Config kubeconfig = Config.fromKubeconfig(content);
+        client = new DefaultKubernetesClient(kubeconfig);
+
+        data.put("result", client.getConfiguration().getContexts());
+        response.put("data", data);
+        return response;
+    }
+    
     public JSONArray findAllPVCMountedByPod(){
 
         JSONArray pod_object_list = new JSONArray();
