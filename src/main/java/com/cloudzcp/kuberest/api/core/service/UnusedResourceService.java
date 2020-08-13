@@ -22,10 +22,10 @@ public class UnusedResourceService {
 
     private static KubernetesClient client = new DefaultKubernetesClient();
 
-    private static String apiurl = "api/v1/unused";
-    private static String apiurl_ns = "api/v1/unused/ns/";
-    private static String apiurl_pvcs = "api/v1/unused/pvcs";
-    private static String apiurl_pvs = "api/v1/unused/pvs";
+    private static final String apiurl = "api/v1/unused";
+    private static final String apiurl_ns = "api/v1/unused/ns/";
+    private static final String apiurl_pvcs = "api/v1/unused/pvcs";
+    private static final String apiurl_pvs = "api/v1/unused/pvs";
 
     public JSONObject setConfig(MultipartFile conf) throws IOException {
 
@@ -192,6 +192,11 @@ public class UnusedResourceService {
                             object.put("status", pvc.getStatus().getPhase());
                             object.put("boundedPV", pvc.getSpec().getVolumeName());
                             object.put("storageClassName", pvc.getSpec().getStorageClassName());
+                            if (pvc.getMetadata().getLabels() != null) {
+                                object.put("label/unused-delete-list", pvc.getMetadata().getLabels().get("unused-delete-list"));
+                            } else {
+                                object.put("label/unused-delete-list", null);
+                            }
                             object.put("unusedType", checkUnusedPVCType(mountedByPods, pvc));
                             pvc_object_list.add(object);
                         }
@@ -227,6 +232,11 @@ public class UnusedResourceService {
                             object.put("volumeReclaimPolicy", pv.getSpec().getPersistentVolumeReclaimPolicy());
                             object.put("storageClassName", pv.getSpec().getStorageClassName());
                             object.put("unusedType", checkUnusedPVType(mountedByPods, pv));
+                            if (pv.getMetadata().getLabels() != null) {
+                                object.put("label/unused-delete-list", pv.getMetadata().getLabels().get("unused-delete-list"));
+                            } else {
+                                object.put("label/unused-delete-list", null);
+                            }
                             if (pv.getSpec().getClaimRef() != null) {
                                 object.put("boundedPVC", pv.getSpec().getClaimRef().getName());
                             }
