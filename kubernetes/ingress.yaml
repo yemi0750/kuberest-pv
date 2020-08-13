@@ -1,0 +1,24 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  namespace: kuberest
+  labels:
+    app: kuberest
+  name: kuberest
+spec:
+  rules:
+  - host: kuberest.cloudzcp.com
+    http:
+      paths:
+      - backend:
+          serviceName: kuberest
+          servicePort: http
+        path: /
+  tls:
+  - hosts:
+    - kuberest.cloudzcp.com
+    secretName: cloudzcp-com-cert
+status:
+  loadBalancer:
+    ingress:
+    - hostname: 
