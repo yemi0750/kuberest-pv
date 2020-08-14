@@ -19,13 +19,13 @@ public class UnusedResourceController {
     @Autowired private UnusedResourceService unusedResourceService;
 
     @GetMapping
-    public JSONObject getUnusedResourceList(@RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+    public JSONObject getUnusedAll(@RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
         JSONObject result = unusedResourceService.findAll(count, deleteList, storageclassname, status, label);
         return result;
     }
 
     @GetMapping(value = "ns/{namespace}")
-    public JSONObject getUnusedResourceListInNamespace(@PathVariable String namespace, @RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+    public JSONObject getUnusedAllInNamespace(@PathVariable String namespace, @RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
         JSONObject result = unusedResourceService.findAll(namespace, count, deleteList, storageclassname, status, label);
         return result;
     }
@@ -42,15 +42,15 @@ public class UnusedResourceController {
         return result;
     }
 
-    @GetMapping(value = "ns/{namespace}/pvcs/{pvc_name}")
-    public JSONObject describeUnusedPVC(@PathVariable String namespace, @PathVariable String pvc_name) {
-        JSONObject result = unusedResourceService.findPVC(namespace, pvc_name);
-        return result;
-    }
-
     @GetMapping(value = "pvs")
     public JSONObject getUnusedPVList(@RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
         JSONObject result = unusedResourceService.findPVList(deleteList, storageclassname, status, label);
+        return result;
+    }
+
+    @GetMapping(value = "ns/{namespace}/pvcs/{pvc_name}")
+    public JSONObject describeUnusedPVC(@PathVariable String namespace, @PathVariable String pvc_name) {
+        JSONObject result = unusedResourceService.findPVC(namespace, pvc_name);
         return result;
     }
 
@@ -78,18 +78,18 @@ public class UnusedResourceController {
         return result;
     }
 
-    @PutMapping(value = "ns/{namespace}/pvcs")
-    public JSONObject putLabelOnUnusedPVCInNamespace(@PathVariable String namespace, @RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
-        JSONObject result = unusedResourceService.putLabelOnUnusedPVCList(namespace, type, storageclassname, status, label);
-        return result;
-    }
-
     @PutMapping(value = "pvcs")
-    public JSONObject putLabelOnUnusedPVC(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+    public JSONObject putLabelOnUnusedPVCList(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
         JSONObject result = unusedResourceService.putLabelOnUnusedPVCList(type, storageclassname, status, label);
         return result;
     }
     
+    @PutMapping(value = "ns/{namespace}/pvcs")
+    public JSONObject putLabelOnUnusedPVCListInNamespace(@PathVariable String namespace, @RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
+        JSONObject result = unusedResourceService.putLabelOnUnusedPVCList(namespace, type, storageclassname, status, label);
+        return result;
+    }
+
     @PutMapping(value = "pvs")
     public JSONObject putLabelOnUnusedPVList(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
         JSONObject result = unusedResourceService.putLabelOnUnusedPVList(type, storageclassname, status, label);
