@@ -1,6 +1,5 @@
 package com.cloudzcp.kuberest.api.core.service;
 
-import java.io.FileWriter;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -27,6 +26,7 @@ public class UnusedResourceService {
     private static final String apiurl_pvcs = "api/v1/unused/pvcs";
     private static final String apiurl_pvs = "api/v1/unused/pvs";
 
+    //thread safe 문제 해결 필요
     public JSONObject setConfig(MultipartFile conf) throws IOException {
 
         JSONObject data = new JSONObject();
@@ -359,7 +359,7 @@ public class UnusedResourceService {
         JSONArray mountedByPods = findAllPVCMountedByPod();
 
         if (pvc == null) {
-
+            data.put("result", name+" not found");
         } else if (!isUnusedPVC(mountedByPods, pvc)) {
             data.put("unusedType", name+" is used resource");
         } else {
@@ -406,7 +406,7 @@ public class UnusedResourceService {
         JSONArray mountedByPods = findAllPVCMountedByPod();
 
         if (pv == null) {
-
+            data.put("result", name+" not found");
         } else if (!isUnusedPV(mountedByPods, pv)) {
             data.put("unusedType", name+" is used resource");
         } else {
@@ -420,22 +420,6 @@ public class UnusedResourceService {
         data.put("selfLink", apiurl_pvs+name);
         response.put("data", data);
         return response;
-    }
-
-    public void createJSONFile(JSONObject obj, String filename){
-
-        String home = System.getProperty("user.home");
-        FileWriter file;
-
-        try {
-            file = new FileWriter(home + "/Downloads/" + filename + ".json");
-            file.write(obj.toJSONString());
-            file.flush();
-            file.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        
     }
 
     public JSONObject deleteUnusedPVC(String namespace, String pvc_name) {
