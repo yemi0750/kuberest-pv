@@ -21,10 +21,10 @@ public class UnusedResourceService {
 
     private static KubernetesClient client = new DefaultKubernetesClient();
 
-    private static final String apiurl = "api/v1/unused";
-    private static final String apiurl_ns = "api/v1/unused/ns/";
-    private static final String apiurl_pvcs = "api/v1/unused/pvcs";
-    private static final String apiurl_pvs = "api/v1/unused/pvs";
+    private static final String APIURL = "api/v1/unused";
+    private static final String APIURL_NS = "api/v1/unused/ns/";
+    private static final String APIURL_PVCS = "api/v1/unused/pvcs";
+    private static final String APIURL_PVS = "api/v1/unused/pvs";
 
     //thread safe 문제 해결 필요
     public JSONObject setConfig(MultipartFile conf) throws IOException {
@@ -266,7 +266,7 @@ public class UnusedResourceService {
         PersistentVolumeClaimList pvc_list;
         PersistentVolumeList pv_list;
 
-        data.put("selfLink", apiurl);
+        data.put("selfLink", APIURL);
         if (deleteList != null) {
             pvc_list = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", deleteList).list();
             pv_list = client.persistentVolumes().withLabel("unused-delete-list", deleteList).list();
@@ -293,7 +293,7 @@ public class UnusedResourceService {
 
         PersistentVolumeClaimList pvc_list;
 
-        data.put("selfLink", apiurl_ns+namespace);
+        data.put("selfLink", APIURL_NS+namespace);
         if (deleteList != null) {
             pvc_list = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", deleteList).list();
         } else {
@@ -315,7 +315,7 @@ public class UnusedResourceService {
 
         PersistentVolumeClaimList pvc_list;
 
-        data.put("selfLink", apiurl_pvcs);
+        data.put("selfLink", APIURL_PVCS);
         if (deleteList != null) {
             pvc_list = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", deleteList).list();
         } else {
@@ -336,7 +336,7 @@ public class UnusedResourceService {
 
         PersistentVolumeClaimList pvc_list;
 
-        data.put("selfLink", apiurl_ns+namespace+"/pvcs");
+        data.put("selfLink", APIURL_NS+namespace+"/pvcs");
         if (deleteList != null) {
             pvc_list = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", deleteList).list();
         } else {
@@ -370,7 +370,7 @@ public class UnusedResourceService {
             data.put("PVC", pvc_object);
         }
 
-        data.put("selfLink", apiurl_ns+namespace+"/pvcs/"+name);
+        data.put("selfLink", APIURL_NS+namespace+"/pvcs/"+name);
         response.put("data", data);
         return response;
     }
@@ -383,7 +383,7 @@ public class UnusedResourceService {
 
         PersistentVolumeList pv_list;
 
-        data.put("selfLink", apiurl_pvs);
+        data.put("selfLink", APIURL_PVS);
         if (deleteList != null) {
             pv_list = client.persistentVolumes().withLabel("unused-delete-list", deleteList).list();
         } else {
@@ -417,7 +417,7 @@ public class UnusedResourceService {
             data.put("PVC", pv_object);
         }
 
-        data.put("selfLink", apiurl_pvs+name);
+        data.put("selfLink", APIURL_PVS+name);
         response.put("data", data);
         return response;
     }
@@ -654,7 +654,7 @@ public class UnusedResourceService {
             result = "bad request / type = [ exclude / include / release ]";
         }
         
-        data.put("selfLink", apiurl_ns+namespace+"/pvcs");
+        data.put("selfLink", APIURL_NS+namespace+"/pvcs");
         data.put("result", result);
         response.put("data", data);
         return response;
@@ -673,7 +673,7 @@ public class UnusedResourceService {
             result = "bad request / type = [ exclude / include / release ]";
         }
         
-        data.put("selfLink", apiurl_pvcs);
+        data.put("selfLink", APIURL_PVCS);
         data.put("result", result);
         response.put("data", data);
         return response;
@@ -692,7 +692,7 @@ public class UnusedResourceService {
             result = "bad request / type = [ exclude / include / release ]";
         }
         
-        data.put("selfLink", apiurl_pvs);
+        data.put("selfLink", APIURL_PVS);
         data.put("result", result);
         response.put("data", data);
         return response;
@@ -754,7 +754,7 @@ public class UnusedResourceService {
             }
         }
         
-        data.put("selfLink", apiurl_ns+namespace+"/pvcs/"+pvc_name);
+        data.put("selfLink", APIURL_NS+namespace+"/pvcs/"+pvc_name);
         data.put("result", result);
         response.put("data", data);
         return response;
@@ -815,7 +815,7 @@ public class UnusedResourceService {
             }
         }
 
-        data.put("selfLink", apiurl_pvs+pv_name);
+        data.put("selfLink", APIURL_PVS+pv_name);
         data.put("result", result);
         response.put("data", data);
         return response;
