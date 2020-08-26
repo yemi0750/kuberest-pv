@@ -1,10 +1,27 @@
 package com.cloudzcp.kuberest.api.core.service;
 
 import java.io.IOException;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.stream.Collectors;
 
-import org.json.simple.JSONArray;
-import org.json.simple.JSONObject;
+import com.cloudzcp.kuberest.api.core.model.MountedPVC;
+import com.cloudzcp.kuberest.api.core.model.UnusedPVList;
+import com.cloudzcp.kuberest.api.core.model.UnusedPVCList;
+import com.cloudzcp.kuberest.api.core.model.MountedPod;
+import com.cloudzcp.kuberest.api.core.model.ResponseAll;
+import com.cloudzcp.kuberest.api.core.model.ResponseAllInNamespace;
+import com.cloudzcp.kuberest.api.core.model.ResponseConfig;
+import com.cloudzcp.kuberest.api.core.model.ResponsePV;
+import com.cloudzcp.kuberest.api.core.model.ResponsePVC;
+import com.cloudzcp.kuberest.api.core.model.ResponsePVCList;
+import com.cloudzcp.kuberest.api.core.model.ResponsePVList;
+import com.cloudzcp.kuberest.api.core.model.ResponseMountedPod;
+import com.cloudzcp.kuberest.api.core.model.ResponseResult;
+import com.cloudzcp.kuberest.api.core.model.UnusedPV;
+import com.cloudzcp.kuberest.api.core.model.UnusedPVC;
+
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -12,712 +29,917 @@ import io.fabric8.kubernetes.api.model.PersistentVolume;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaimList;
 import io.fabric8.kubernetes.api.model.PersistentVolumeList;
+import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.DefaultKubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClient;
 
+/**
+ * Unused Kubernetes Resource (PV, PVC)를 조회 및 삭제하는 REST API - Service<br>
+ * Resource 종류는 PersistentVolume, PersistentVolumeClaim
+ */
 @Service
 public class UnusedResourceService {
 
-    private static KubernetesClient client = new DefaultKubernetesClient();
+    /** kubernetes client */
+    private KubernetesClient client = new DefaultKubernetesClient();
 
     private static final String APIURL = "api/v1/unused";
     private static final String APIURL_NS = "api/v1/unused/ns/";
     private static final String APIURL_PVCS = "api/v1/unused/pvcs";
     private static final String APIURL_PVS = "api/v1/unused/pvs";
+    private static final String APIURL_CONFIG = "api/v1/unused/config";
+    private static final String TYPE_BAD_REQUEST = "bad request / type = [ exclude / include / release ]";
+    private static final String PVC_NOT_FOUND = "No PVC results found. Please add unused-delete-list PVC";
+    private static final String PV_NOT_FOUND = "No PV results found. Please add unused-delete-list PV";
 
-    //thread safe 문제 해결 필요
-    public JSONObject setConfig(MultipartFile conf) throws IOException {
+    /**
+     * 특정 config file로 kubernetes client 생성<br>
+     * thread safe
+     * @param conf config file
+     * @return ResponseConfig
+     * @throws IOException IOException
+     */
+    public ResponseConfig setConfig(MultipartFile conf) throws IOException {
 
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-    
         String content = new String(conf.getBytes());
         Config kubeconfig = Config.fromKubeconfig(content);
         client = new DefaultKubernetesClient(kubeconfig);
 
-        data.put("result", client.getConfiguration().getContexts());
-        response.put("data", data);
+        ResponseConfig response = new ResponseConfig(APIURL_CONFIG, (Object)client.getConfiguration().getContexts());
         return response;
     }
     
-    public JSONArray findAllPVCMountedByPod(){
+    /**
+     * 모든 Pod를 검사하여 spec.volume에 mount된 pvc 목록을 검출<br>
+     * podName, podNamespace, mount된 pvcList(pvcName, PV에 bound된 PVName)
+     * @return ResponseMountedPod
+     */
+    private ResponseMountedPod findAllPVCMountedByPod(){
 
-        JSONArray pod_object_list = new JSONArray();
+        List<MountedPod> mountedPodList = new ArrayList<MountedPod>();
 
-        client.pods().inAnyNamespace().list().getItems().forEach(
-            pod -> {
-                JSONObject object = new JSONObject();
-                JSONArray object_list = new JSONArray();
-                object.put("name", pod.getMetadata().getName());
-                object.put("namespace", pod.getMetadata().getNamespace());
+        List<Pod> pods = client.pods().inAnyNamespace().list().getItems();
+        for(Pod pod : pods) {
+            String podName = pod.getMetadata().getName();
+            String podNamespace = pod.getMetadata().getNamespace();
 
-                pod.getSpec().getVolumes().forEach(
-                    volume -> {
-                        if (volume.getPersistentVolumeClaim() != null){
-                            JSONObject pvc_temp = new JSONObject();
-                            String claimName = volume.getPersistentVolumeClaim().getClaimName();
-                            pvc_temp.put("claimName", claimName);
-                            pvc_temp.put("boundedPV", client.persistentVolumeClaims().inNamespace(pod.getMetadata().getNamespace()).withName(claimName).get().getSpec().getVolumeName());
-                            object_list.add(pvc_temp);
-                        }
-                        
-                    }
-                );
-
-                if (object_list.size() > 0) {
-                    object.put("pvcs", object_list);
-                    pod_object_list.add(object);
-                }
+            List<MountedPVC> mountedPVCList = pod.getSpec().getVolumes()
+                .stream()
+                .filter(volume -> volume.getPersistentVolumeClaim() != null)
+                .map(volume -> getMountedPVC(podNamespace, volume))
+                .collect(Collectors.toList());
+            
+            if (mountedPVCList.size() > 0) {
+                MountedPod mountedPod = new MountedPod(podName, podNamespace, mountedPVCList);
+                mountedPodList.add(mountedPod);
             }
-        );
+        }
 
-        return pod_object_list;
-    }
-
-    public JSONObject printPVCMountedByPod(){
-
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-
-        JSONArray mountedByPods = findAllPVCMountedByPod();
-
-        data.put("PodSpecMountVolume", mountedByPods);
-        response.put("data", data);
-
+        ResponseMountedPod response = new ResponseMountedPod(mountedPodList);
         return response;
     }
 
-    public Boolean isMountedByPod(JSONArray mountedByPods, String claimName, String namespace){
+    /**
+     * volume에서 pvc의 이름(claimName)찾고, 해당 pvc에 bound된 pv 이름 찾아서 객체 생성
+     * @param podNamespace pod namespace
+     * @param volume pod spec.volumes 목록 중 persistentVolumeClaim
+     * @return MountedPVC
+     */
+    private MountedPVC getMountedPVC (String podNamespace, Volume volume) {
+        String pvcName = volume.getPersistentVolumeClaim().getClaimName();
+        String boundedPVNname = client.persistentVolumeClaims().inNamespace(podNamespace).withName(pvcName).get().getSpec().getVolumeName();
+        return new MountedPVC(pvcName, boundedPVNname);
+    }
+    
+    /**
+     * findAllPVCMountedByPod()로 검출한 모든 pod의 pvc 목록을 출력
+     * @return ResponseMountedPod
+     * @see #findAllPVCMountedByPod()
+     */
+    public ResponseMountedPod printPVCMountedByPod(){
+        ResponseMountedPod response = findAllPVCMountedByPod();
+        return response;
+    }
 
-        Boolean result = false;
+    /**
+     * 단일 PVC가 Pod spec에 명시되어 있는지 여부 검사<br>
+     * PVC는 name, namespace로 특정
+     * @param mountedPodList pod spec에 명시된 pvc list
+     * @param pvcName pvc name
+     * @param pvcNamespace pvc namespace
+     * @return boolean
+     */
+    private boolean isMountedByPod(List<MountedPod> mountedPodList, String pvcName, String pvcNamespace){
 
-        if (!mountedByPods.isEmpty()) {
-            for (int i=0; i<mountedByPods.size(); i++){
-                JSONObject pod = (JSONObject)mountedByPods.get(i);
-                JSONArray pvcs = (JSONArray)pod.get("pvcs");
-                for (int j=0; j<pvcs.size(); j++) {
-                    if (((JSONObject)pvcs.get(j)).get("claimName").toString().equals(claimName) && pod.get("namespace").toString().equals(namespace)){
-                        result = true;
-                        return result;
+        if (!mountedPodList.isEmpty()) {
+            for (MountedPod mountedPod : mountedPodList){
+                List<MountedPVC> mountedPVCList = mountedPod.getMountedPVC();
+                for (MountedPVC mountedPVC : mountedPVCList) {
+                    if (mountedPVC.getName().equals(pvcName) && mountedPod.getNamespace().equals(pvcNamespace)){
+                        return true;
                     }
                 }
             }
         }
-
-        return result;
+        return false;
     }
 
-    public Boolean isUnusedPVC(JSONArray mountedByPods, PersistentVolumeClaim pvc) {
+    /**
+     * PVC Unused 여부 검사<br>
+     * (검사 기준 1) DeletionTimestamp 존재하지 않으면 status가 Terminating인 경우로 판단, return false<br>
+     * (검사 기준 2) Pod의 spec에 명시되어 있지 않으면 return true
+     * @param mountedPodList pod spec에 명시된 pvc list
+     * @param pvc pvc
+     * @return boolean
+     */
+    private boolean isUnusedPVC(List<MountedPod> mountedPodList, PersistentVolumeClaim pvc) {
+
+        String pvcName = pvc.getMetadata().getName();
+        String pvcNamespace = pvc.getMetadata().getNamespace();
 
         if (pvc.getMetadata().getDeletionTimestamp() != null){
             //terminating
             return false;
         }
-        if (!isMountedByPod(mountedByPods, pvc.getMetadata().getName(), pvc.getMetadata().getNamespace())){
+
+        if (!isMountedByPod(mountedPodList, pvcName, pvcNamespace)){
             return true;
         } else {
             return false;
         }
     }
 
-    public Boolean isUnusedPV(JSONArray mountedByPods, PersistentVolume pv) {
-
-        Boolean result = false;
+    /**
+     * PV Unused 여부 검사<br>
+     * (검사 기준 1) DeletionTimestamp 존재하지 않으면 status가 Terminating인 경우로 판단, return false<br>
+     * (검사 기준 2) Status.Phase가 Bound가 아니면 return true<br>
+     * (검사 기준 3) Bound된 PV가 Pod의 spec에 명시되어 있지 않으면 return true
+     * @param mountedPodList pod spec에 명시된 pvc list
+     * @param pv pv
+     * @return boolean
+     */
+    private boolean isUnusedPV(List<MountedPod> mountedPodList, PersistentVolume pv) {
 
         if (pv.getMetadata().getDeletionTimestamp() != null) {
             //terminating
             return false;
         }
-        if (!pv.getStatus().getPhase().equals("Bound")) {
+
+        String pvStatus = pv.getStatus().getPhase();
+        if (!pvStatus.equals("Bound")) {
             return true;
         }
-        if (pv.getSpec().getClaimRef() != null){
-            if (!isMountedByPod(mountedByPods, pv.getSpec().getClaimRef().getName(), pv.getSpec().getClaimRef().getNamespace())) {
-                return true;
-            } else {
-                return false;
-            }
-        }
 
-        return result;
+        String pvcName = pv.getSpec().getClaimRef().getName();
+        String pvcNamespace = pv.getSpec().getClaimRef().getNamespace();
+        if (!isMountedByPod(mountedPodList, pvcName, pvcNamespace)) {
+            return true;
+        } else {
+            return false;
+        }
     }
 
-    public String checkUnusedPVCType(JSONArray mountedByPods, PersistentVolumeClaim pvc) {
+    /**
+     * PVC가 Unused Resource로 판단된 이유를 반환
+     * @param mountedPodList pod spec에 명시된 pvc list
+     * @param pvc pvc
+     * @return String
+     */
+    private String checkUnusedPVCType(List<MountedPod> mountedPodList, PersistentVolumeClaim pvc) {
 
-        String result = "";
+        String pvcStatus = pvc.getStatus().getPhase();
+        String pvcName = pvc.getMetadata().getName();
+        String pvcNamespace = pvc.getMetadata().getNamespace();
 
-        if (!isMountedByPod(mountedByPods, pvc.getMetadata().getName(), pvc.getMetadata().getNamespace())){
-            if (!pvc.getStatus().getPhase().equals("Bound")) {
-                result = "PVC is not mounted by Pod / PVC Status is not 'Bound'";
+        if (!isMountedByPod(mountedPodList, pvcName, pvcNamespace)){
+            if (!pvcStatus.equals("Bound")) {
+                return "PVC is not mounted by Pod / PVC Status is not 'Bound'";
             } else {
-                result = "PVC is not mounted by Pod";
+                return "PVC is not mounted by Pod";
             }
         }
-
-        return result;
+        return "";
     }
 
-    public String checkUnusedPVType(JSONArray mountedByPods, PersistentVolume pv) {
+    /**
+     * PV가 Unused Resource로 판단된 이유를 반환
+     * @param mountedPodList pod spec에 명시된 pvc list
+     * @param pv pv
+     * @return String
+     */
+    private String checkUnusedPVType(List<MountedPod> mountedPodList, PersistentVolume pv) {
 
-        String result = "";
-
-        if (!pv.getStatus().getPhase().equals("Bound")) {
+        String pvStatus = pv.getStatus().getPhase();
+        if (!pvStatus.equals("Bound")) {
             return "PV Status is not 'Bound'";
         }
-        if (pv.getSpec().getClaimRef() != null){
-            if (!isMountedByPod(mountedByPods, pv.getSpec().getClaimRef().getName(), pv.getSpec().getClaimRef().getNamespace())) {
-                result = "PVC("+pv.getSpec().getClaimRef().getName()+") connected to PV is not mounted by Pod";
-            }
-        }
 
-        return result;
+        String pvcName = pv.getSpec().getClaimRef().getName();
+        String pvcNamespace = pv.getSpec().getClaimRef().getNamespace();
+        if (!isMountedByPod(mountedPodList, pvcName, pvcNamespace)) {
+            return "PVC("+pvcName+") connected to PV is not mounted by Pod";
+        }
+        return "";
     }
 
-    public JSONObject getPVCList(PersistentVolumeClaimList pvc_list, Boolean count, String storageclassname, String status, String label) {
+    /**
+     * Unused PVC의 정보로 UnusedPVC 객체 생성<br>
+     * PVC 기본 정보, bound된 PVName, unusedType, 'unused-delete-list' label의 value
+     * @param mountedPodList pod spec에 명시된 pvc list
+     * @param pvc pvc
+     * @return UnusedPVC
+     */
+    private UnusedPVC getUnusedPVC(List<MountedPod> mountedPodList, PersistentVolumeClaim pvc) {
 
-        JSONObject pvc_object_count = new JSONObject();
-        JSONArray pvc_object_list = new JSONArray();
-        JSONObject pvc_object = new JSONObject();
-        JSONArray mountedByPods = findAllPVCMountedByPod();
-
-        if (count == null || !count) {
-            pvc_list.getItems().forEach(
-                pvc -> {
-                    if(isUnusedPVC(mountedByPods, pvc)){
-                        if (checkPVCFields(pvc, storageclassname, status, label)){
-                            JSONObject object = new JSONObject();
-                            object.put("name", pvc.getMetadata().getName());
-                            object.put("namespace", pvc.getMetadata().getNamespace());
-                            object.put("status", pvc.getStatus().getPhase());
-                            object.put("boundedPV", pvc.getSpec().getVolumeName());
-                            object.put("storageClassName", pvc.getSpec().getStorageClassName());
-                            if (pvc.getMetadata().getLabels() != null) {
-                                object.put("label/unused-delete-list", pvc.getMetadata().getLabels().get("unused-delete-list"));
-                            } else {
-                                object.put("label/unused-delete-list", null);
-                            }
-                            object.put("unusedType", checkUnusedPVCType(mountedByPods, pvc));
-                            pvc_object_list.add(object);
-                        }
-                    }
-                }
-            );
-            pvc_object.put("unusedList", pvc_object_list);
-        }
-        if (count == null || count) {
-            pvc_object_count.put("total", pvc_list.getItems().size());
-            pvc_object_count.put("unused", pvc_list.getItems().stream().filter(pvc -> isUnusedPVC(mountedByPods, pvc)&&checkPVCFields(pvc, storageclassname, status, label)).count());
-            pvc_object.put("count", pvc_object_count);
-        }
-
-        return pvc_object;
-    }
-
-    public JSONObject getPVList(PersistentVolumeList pv_list, Boolean count, String storageclassname, String status, String label) {
-
-        JSONObject pv_object_count = new JSONObject();
-        JSONArray pv_object_list = new JSONArray();
-        JSONObject pv_object = new JSONObject();
-        JSONArray mountedByPods = findAllPVCMountedByPod();
-
-        if (count == null || !count) {
-            pv_list.getItems().forEach(
-                pv -> {
-                    if(isUnusedPV(mountedByPods, pv)){
-                        if (checkPVFields(pv, storageclassname, status, label)){
-                            JSONObject object = new JSONObject();
-                            object.put("name", pv.getMetadata().getName());
-                            object.put("status", pv.getStatus().getPhase());
-                            object.put("volumeReclaimPolicy", pv.getSpec().getPersistentVolumeReclaimPolicy());
-                            object.put("storageClassName", pv.getSpec().getStorageClassName());
-                            object.put("unusedType", checkUnusedPVType(mountedByPods, pv));
-                            if (pv.getMetadata().getLabels() != null) {
-                                object.put("label/unused-delete-list", pv.getMetadata().getLabels().get("unused-delete-list"));
-                            } else {
-                                object.put("label/unused-delete-list", null);
-                            }
-                            if (pv.getSpec().getClaimRef() != null) {
-                                object.put("boundedPVC", pv.getSpec().getClaimRef().getName());
-                            }
-                            pv_object_list.add(object);
-                        }
-                    }
-                }
-            );
-            pv_object.put("unusedList", pv_object_list);
-        }
-        if (count == null || count) {
-            pv_object_count.put("total", pv_list.getItems().size());
-            pv_object_count.put("unused", pv_list.getItems().stream().filter(pv -> isUnusedPV(mountedByPods, pv)&&checkPVFields(pv, storageclassname, status, label)).count());
-            pv_object.put("count", pv_object_count);
-        }
-
-        return pv_object;
-    }
-    
-    public JSONObject findAll(Boolean count, String deleteList, String storageclassname, String status, String label){
-
-        JSONObject pvc_object = new JSONObject();
-        JSONObject pv_object = new JSONObject();
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-
-        PersistentVolumeClaimList pvc_list;
-        PersistentVolumeList pv_list;
-
-        data.put("selfLink", APIURL);
-        if (deleteList != null) {
-            pvc_list = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", deleteList).list();
-            pv_list = client.persistentVolumes().withLabel("unused-delete-list", deleteList).list();
+        String pvcName = pvc.getMetadata().getName();
+        String pvcNamespace = pvc.getMetadata().getNamespace();
+        String pvcStatus = pvc.getStatus().getPhase();
+        String pvcBoundedPV = pvc.getSpec().getVolumeName();
+        String pvcStorageClassName = pvc.getSpec().getStorageClassName();
+        String pvUnusedType = checkUnusedPVCType(mountedPodList, pvc);
+        String pvUnusedDeleteList = "";
+        if (pvc.getMetadata().getLabels() != null) {
+            pvUnusedDeleteList = pvc.getMetadata().getLabels().get("unused-delete-list");
         } else {
-            pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
-            pv_list = client.persistentVolumes().list();
+            pvUnusedDeleteList = null;
         }
-
-        pv_object = getPVList(pv_list, count, storageclassname, status, label);
-        data.put("PV", pv_object);
-
-        pvc_object = getPVCList(pvc_list, count, storageclassname, status, label);
-        data.put("PVC", pvc_object);
-        response.put("data", data);
-
-        return response;
-    }
-
-    public JSONObject findAll(String namespace, Boolean count, String deleteList, String storageclassname, String status, String label){
-
-        JSONObject pvc_object = new JSONObject();
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-
-        PersistentVolumeClaimList pvc_list;
-
-        data.put("selfLink", APIURL_NS+namespace);
-        if (deleteList != null) {
-            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", deleteList).list();
-        } else {
-            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
-        }
-
-        pvc_object = getPVCList(pvc_list, count, storageclassname, status, label);
-        data.put("PVC", pvc_object);
-        response.put("data", data);
-
-        return response;
-    }
-
-    public JSONObject findPVCList(String deleteList, String storageclassname, String status, String label){
-
-        JSONObject pvc_object = new JSONObject();
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-
-        PersistentVolumeClaimList pvc_list;
-
-        data.put("selfLink", APIURL_PVCS);
-        if (deleteList != null) {
-            pvc_list = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", deleteList).list();
-        } else {
-            pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
-        }
-
-        pvc_object = getPVCList(pvc_list, false, storageclassname, status, label);
-        data.put("PVC", pvc_object);
-        response.put("data", data);
-        return response;
-    }
-
-    public JSONObject findPVCList(String namespace, String deleteList, String storageclassname, String status, String label){
-
-        JSONObject pvc_object = new JSONObject();
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-
-        PersistentVolumeClaimList pvc_list;
-
-        data.put("selfLink", APIURL_NS+namespace+"/pvcs");
-        if (deleteList != null) {
-            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", deleteList).list();
-        } else {
-            pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
-        }
-
-        pvc_object = getPVCList(pvc_list, false, storageclassname, status, label);
-        data.put("PVC", pvc_object);
-        response.put("data", data);
-        return response;
-    }
-
-    public JSONObject findPVC(String namespace, String name){
-
-        JSONObject pvc_object = new JSONObject();
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-
-        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(name).get();
-        JSONArray mountedByPods = findAllPVCMountedByPod();
-
-        if (pvc == null) {
-            data.put("result", name+" not found");
-        } else if (!isUnusedPVC(mountedByPods, pvc)) {
-            data.put("unusedType", name+" is used resource");
-        } else {
-            JSONObject object = new JSONObject();
-            object.put("unusedType", checkUnusedPVCType(mountedByPods, pvc));
-            object.put("detail", pvc);
-            pvc_object.put(name, object);
-            data.put("PVC", pvc_object);
-        }
-
-        data.put("selfLink", APIURL_NS+namespace+"/pvcs/"+name);
-        response.put("data", data);
-        return response;
-    }
-
-    public JSONObject findPVList(String deleteList, String storageclassname, String status, String label){
-
-        JSONObject pv_object = new JSONObject();
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-
-        PersistentVolumeList pv_list;
-
-        data.put("selfLink", APIURL_PVS);
-        if (deleteList != null) {
-            pv_list = client.persistentVolumes().withLabel("unused-delete-list", deleteList).list();
-        } else {
-            pv_list = client.persistentVolumes().list();
-        }
-
-        pv_object = getPVList(pv_list, false, storageclassname, status, label);
-        data.put("PV", pv_object);
-        response.put("data", data);
-        return response;
-    }
-
-    public JSONObject findPV(String name){
         
-        JSONObject pv_object = new JSONObject();
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
+        return new UnusedPVC(pvcName, pvcNamespace, pvcStatus, pvcBoundedPV, pvcStorageClassName, pvUnusedDeleteList, pvUnusedType);
+    }
 
-        PersistentVolume pv = client.persistentVolumes().withName(name).get();
-        JSONArray mountedByPods = findAllPVCMountedByPod();
+    /**
+     * Unused PV의 정보로 UnusedPV 객체 생성<br>
+     * PV 기본 정보, bound된 PVCName, unusedType, 'unused-delete-list' label의 value
+     * @param mountedPodList pod spec에 명시된 pvc list
+     * @param pv pv
+     * @return UnusedPV
+     */
+    private UnusedPV getUnusedPV(List<MountedPod> mountedPodList, PersistentVolume pv) {
 
-        if (pv == null) {
-            data.put("result", name+" not found");
-        } else if (!isUnusedPV(mountedByPods, pv)) {
-            data.put("unusedType", name+" is used resource");
+        String pvName = pv.getMetadata().getName();
+        String pvVolumeReclaimPolicy = pv.getSpec().getPersistentVolumeReclaimPolicy();
+        String pvStatus = pv.getStatus().getPhase();
+        String pvBoundedPVC = "";
+        if (pv.getSpec().getClaimRef() != null) {
+            pvBoundedPVC = pv.getSpec().getClaimRef().getName();
+        }
+        String pvStorageClassName = pv.getSpec().getStorageClassName();
+        String pvUnusedType = checkUnusedPVType(mountedPodList, pv);
+        String pvUnusedDeleteList = "";
+        if (pv.getMetadata().getLabels() != null) {
+            pvUnusedDeleteList = pv.getMetadata().getLabels().get("unused-delete-list");
         } else {
-            JSONObject object = new JSONObject();
-            object.put("unusedType", checkUnusedPVType(mountedByPods, pv));
-            object.put("detail", pv);
-            pv_object.put(name, object);
-            data.put("PVC", pv_object);
+            pvUnusedDeleteList = null;
         }
 
-        data.put("selfLink", APIURL_PVS+name);
-        response.put("data", data);
+        return new UnusedPV(pvName, pvVolumeReclaimPolicy, pvStatus, pvBoundedPVC, pvStorageClassName, pvUnusedDeleteList, pvUnusedType);
+    }
+
+    /**
+     * PVC List의 각 PVC의 Unused 여부, 조건 만족 여부 검사<br>
+     * 조건을 만족하는 Unused PVC 목록과 수 반환
+     * @param pvcList pvc list
+     * @param count count 출력 여부
+     * @param storageclassname (조건 1) storageClassname
+     * @param status (조건 2) status.phase
+     * @param label (조건 3) label (key:value / key)
+     * @return UnusedPVCList
+     */
+    private UnusedPVCList getPVCList(PersistentVolumeClaimList pvcList, Boolean count, String storageclassname, String status, String label) {
+
+        List<UnusedPVC> unusedPVCList = new ArrayList<UnusedPVC>();
+        HashMap<String, Integer> unusedPVCCount = new HashMap<String, Integer>();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+
+        if (count == null || !count) {
+            unusedPVCList = pvcList.getItems()
+                .stream()
+                .filter(pvc -> isUnusedPVC(mountedPodList, pvc))
+                .filter(pvc -> checkPVCFields(pvc, storageclassname, status, label))
+                .map(pvc -> getUnusedPVC(mountedPodList, pvc))
+                .collect(Collectors.toList());
+        }
+        if (count == null || count) {
+            int total = pvcList.getItems().size();
+            long unused = pvcList.getItems()
+                .stream()
+                .filter(pvc -> isUnusedPVC(mountedPodList, pvc))
+                .filter(pvc -> checkPVCFields(pvc, storageclassname, status, label))
+                .count();
+            unusedPVCCount.put("total", total);
+            unusedPVCCount.put("unused", (int)unused);
+        }
+
+        UnusedPVCList pvc = new UnusedPVCList(unusedPVCList, unusedPVCCount);
+        return pvc;
+    }
+
+    /**
+     * PV List의 각 PV의 Unused 여부, 조건 만족 여부 검사<br>
+     * 조건을 만족하는 Unused PV 목록과 수 반환
+     * @param pvList pv list
+     * @param count count 출력 여부
+     * @param storageclassname (조건 1) storageClassname
+     * @param status (조건 2) status.phase
+     * @param label (조건 3) label (key:value / key)
+     * @return UnusedPVList
+     */
+    private UnusedPVList getPVList(PersistentVolumeList pvList, Boolean count, String storageclassname, String status, String label) {
+
+        List<UnusedPV> unusedPVList = new ArrayList<UnusedPV>();
+        HashMap<String, Integer> unusedPVCount = new HashMap<String, Integer>();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+
+        if (count == null || !count) {
+            unusedPVList = pvList.getItems()
+                .stream()
+                .filter(pv -> isUnusedPV(mountedPodList, pv))
+                .filter(pv -> checkPVFields(pv, storageclassname, status, label))
+                .map(pv -> getUnusedPV(mountedPodList, pv))
+                .collect(Collectors.toList());
+        }
+        if (count == null || count) {
+            int total = pvList.getItems().size();
+            long unused = pvList.getItems()
+                .stream()
+                .filter(pv -> isUnusedPV(mountedPodList, pv))
+                .filter(pv -> checkPVFields(pv, storageclassname, status, label))
+                .count();
+            unusedPVCount.put("total", total);
+            unusedPVCount.put("unused", (int)unused);
+        }
+
+        UnusedPVList pv = new UnusedPVList(unusedPVList, unusedPVCount);
+        return pv;
+    }
+
+
+    /**
+     * client가 조회할 수 있는 모든 Resource 중 Unused Resource를 검출하여 응답 구성<br>
+     * 검출 대상이 되는 PVC list와 PV list 구성 - (조건 1) 'unused-delete-list' label 존재 여부 및 value 검사<br>
+     * getPVList(), getPVCList() - (조건 2~4) 검사
+     * @param count counnt 출력 여부
+     * @param deleteList (조건 1) 'unused-delete-list' label의 value (exclude : 삭제 방지 대상 / include : 삭제 대상)
+     * @param storageclassname (조건 2) storageClassname
+     * @param status (조건 3) status.phase
+     * @param label (조건 4) label (key:value / key)
+     * @return ResponseAll
+     * @see #getPVList(PersistentVolumeList, Boolean, String, String, String)
+     * @see #getPVCList(PersistentVolumeClaimList, Boolean, String, String, String)
+     */
+    public ResponseAll findAll(Boolean count, String deleteList, String storageclassname, String status, String label){
+
+        PersistentVolumeClaimList pvcList;
+        PersistentVolumeList pvList;
+
+        if (deleteList != null) {
+            pvcList = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", deleteList).list();
+            pvList = client.persistentVolumes().withLabel("unused-delete-list", deleteList).list();
+        } else {
+            pvcList = client.persistentVolumeClaims().inAnyNamespace().list();
+            pvList = client.persistentVolumes().list();
+        }
+
+        UnusedPVList pv = getPVList(pvList, count, storageclassname, status, label);
+        UnusedPVCList pvc = getPVCList(pvcList, count, storageclassname, status, label);
+        ResponseAll response = new ResponseAll(APIURL, pv, pvc);
         return response;
     }
 
-    public JSONObject deleteUnusedPVC(String namespace, String pvc_name) {
+    /**
+     * client가 조회할 수 있는 모든 Resource 중 Unused Resource를 검출하여 응답 구성<br>
+     * PV는 namespace에 속하지 않으므로 조회되지 않음<br>
+     * 검출 대상이 되는 PVC list구성 - namespace, (조건 1) 'unused-delete-list' label 존재 여부 및 value 검사<br>
+     * getPVCList() - (조건 2~4) 검사
+     * @param namespace namespace
+     * @param count count 출력 여부
+     * @param deleteList (조건 1) 'unused-delete-list' label의 value (exclude : 삭제 방지 대상 / include : 삭제 대상)
+     * @param storageclassname (조건 2) storageClassname
+     * @param status (조건 3) status.phase
+     * @param label (조건 4) label (key:value / key)
+     * @return ResponseAllInNamespace
+     * @see #getPVCList(PersistentVolumeClaimList, Boolean, String, String, String)
+     */
+    public ResponseAllInNamespace findAll(String namespace, Boolean count, String deleteList, String storageclassname, String status, String label){
 
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-        String result = pvc_name+" is used resource";
+        PersistentVolumeClaimList pvcList;
 
-        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).get();
-        JSONArray mountedByPods = findAllPVCMountedByPod();
+        if (deleteList != null) {
+            pvcList = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", deleteList).list();
+        } else {
+            pvcList = client.persistentVolumeClaims().inNamespace(namespace).list();
+        }
+
+        UnusedPVCList pvc = getPVCList(pvcList, count, storageclassname, status, label);
+        ResponseAllInNamespace response = new ResponseAllInNamespace(APIURL_NS + namespace, pvc);
+        return response;
+    }
+
+
+    /**
+     * client가 조회할 수 있는 모든 PVC 중 Unused PVC를 검출하여 응답 구성<br>
+     * 검출 대상이 되는 PVC list구성 - (조건 1) 'unused-delete-list' label 존재 여부 및 value 검사<br>
+     * getPVCList() - (조건 2~4) 검사
+     * @param deleteList (조건 1) 'unused-delete-list' label의 value (exclude : 삭제 방지 대상 / include : 삭제 대상)
+     * @param storageclassname (조건 2) storageClassname
+     * @param status (조건 3) status.phase
+     * @param label (조건 4) label (key:value / key)
+     * @return ResponsePVCList
+     * @see #getPVCList(PersistentVolumeClaimList, Boolean, String, String, String)
+     */
+    public ResponsePVCList findPVCList(String deleteList, String storageclassname, String status, String label){
+
+        PersistentVolumeClaimList pvcList;
+
+        if (deleteList != null) {
+            pvcList = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", deleteList).list();
+        } else {
+            pvcList = client.persistentVolumeClaims().inAnyNamespace().list();
+        }
+
+        UnusedPVCList pvc = getPVCList(pvcList, false, storageclassname, status, label);
+        ResponsePVCList response = new ResponsePVCList(APIURL_PVCS, pvc);
+        return response;
+    }
+
+    /**
+     * client가 조회할 수 있는 모든 PVC 중 Unused PVC를 검출하여 응답 구성<br>
+     * 검출 대상이 되는 PVC list구성 - namespace, (조건 1) 'unused-delete-list' label 존재 여부 및 value 검사<br>
+     * getPVCList() - (조건 2~4) 검사
+     * @param namespace namespace
+     * @param deleteList (조건 1) 'unused-delete-list' label의 value (exclude : 삭제 방지 대상 / include : 삭제 대상)
+     * @param storageclassname (조건) storageClassname
+     * @param status (조건 3) status.phase
+     * @param label (조건 4) label (key:value / key)
+     * @return ResponsePVCList
+     * @see #getPVCList(PersistentVolumeClaimList, Boolean, String, String, String)
+     * 
+     */
+    public ResponsePVCList findPVCList(String namespace, String deleteList, String storageclassname, String status, String label){
+
+        PersistentVolumeClaimList pvcList;
+
+        if (deleteList != null) {
+            pvcList = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", deleteList).list();
+        } else {
+            pvcList = client.persistentVolumeClaims().inNamespace(namespace).list();
+        }
+
+        UnusedPVCList pvc = getPVCList(pvcList, false, storageclassname, status, label);
+        ResponsePVCList response = new ResponsePVCList(APIURL_NS + namespace+"/pvcs", pvc);
+        return response;
+    }
+
+    /**
+     * client가 조회할 수 있는 모든 PV 중 Unused PV를 검출하여 응답 구성<br>
+     * 검출 대상이 되는 PV list구성 - (조건 1) 'unused-delete-list' label 존재 여부 및 value 검사<br>
+     * getPVList() - (조건 2~4) 검사
+     * @param deleteList (조건 1) 'unused-delete-list' label의 value (exclude : 삭제 방지 대상 / include : 삭제 대상)
+     * @param storageclassname (조건 2) storageClassname
+     * @param status (조건 3) status.phase
+     * @param label (조건 4) label (key:value / key)
+     * @return ResponsePVList
+     * @see #getPVList(PersistentVolumeList, Boolean, String, String, String)
+     */
+    public ResponsePVList findPVList(String deleteList, String storageclassname, String status, String label){
+
+        PersistentVolumeList pvList;
+
+        if (deleteList != null) {
+            pvList = client.persistentVolumes().withLabel("unused-delete-list", deleteList).list();
+        } else {
+            pvList = client.persistentVolumes().list();
+        }
+
+        UnusedPVList pv = getPVList(pvList, false, storageclassname, status, label);
+        ResponsePVList response = new ResponsePVList(APIURL_PVS, pv);
+        return response;
+    }
+
+    /**
+     * 단일 PVC 존재 여부, Unused 여부 검사<br>
+     * PVC는 name, namespace로 특정<br>
+     * Unused인 경우 해당 PVC의 상세 정보와 unusedType으로 응답 구성
+     * @param pvcNamespace pvc namespace
+     * @param pvcName pvc name
+     * @return ResponsePVC
+     * @see #isUnusedPVC(List, PersistentVolumeClaim)
+     * @see #checkUnusedPVCType(List, PersistentVolumeClaim)
+     */
+    public ResponsePVC findPVC(String pvcNamespace, String pvcName){
+
+        String pvcUnusedType;
+        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).get();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
         if (pvc == null) {
-            result = pvc_name+" not found";
-        }
-        if (isUnusedPVC(mountedByPods, pvc)){
-            if (client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).delete()) {
-                result = "deleted";
-            } else {
-                result = "failed";
-            }
+            pvcUnusedType = pvcName + " not found";
+        } else if (!isUnusedPVC(mountedPodList, pvc)) {
+            pvcUnusedType = pvcName + " is used resource";
+        } else {
+            pvcUnusedType = checkUnusedPVCType(mountedPodList, pvc);
         }
 
-        data.put("name", pvc_name);
-        data.put("result", result);
-        response.put("data", data);
+        ResponsePVC response = new ResponsePVC(APIURL_NS + pvcNamespace + "/pvcs/" + pvcName, pvcUnusedType, pvc);
         return response;
     }
 
-    public JSONObject deleteUnusedPV(String pv_name) {
-
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-        String result = pv_name+" is used resource";
-
-        PersistentVolume pv = client.persistentVolumes().withName(pv_name).get();
-        JSONArray mountedByPods = findAllPVCMountedByPod();
+    /**
+     * 단일 PVC 존재 여부, Unused 여부 검사<br>
+     * PV는 name으로 특정<br>
+     * Unused인 경우 해당 PV의 상세 정보와 unusedType으로 응답 구성
+     * @param pvName pv name
+     * @return ResponsePV
+     * @see #isUnusedPV(List, PersistentVolume)
+     * @see #checkUnusedPVType(List, PersistentVolume)
+     */
+    public ResponsePV findPV(String pvName){
+        
+        String pvUnusedType;
+        PersistentVolume pv = client.persistentVolumes().withName(pvName).get();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
         if (pv == null) {
-            result = pv_name+" not found";
-        }
-        if (isUnusedPV(mountedByPods, pv)){
-            if (client.persistentVolumes().withName(pv_name).delete()) {
-                result = "deleted";
-            } else {
-                result = "failed";
-            }
+            pvUnusedType = pvName + " not found";
+        } else if (!isUnusedPV(mountedPodList, pv)) {
+            pvUnusedType = pvName + " is used resource";
+        } else {
+            pvUnusedType = checkUnusedPVType(mountedPodList, pv);
         }
 
-        data.put("name", pv_name);
-        data.put("result", result);
-        response.put("data", data);
+        ResponsePV response = new ResponsePV(APIURL_PVS + "/" + pvName, pvUnusedType, pv);
         return response;
     }
 
-    public String checkUnusedPVCDeleteListLabel(PersistentVolumeClaim pvc) {
 
-        String result = "";
+    
+    /**
+     * PVC의 unused-delete-list label 존재 여부와 value 검사
+     * @param pvc pvc
+     * @return String
+     */
+    private String checkUnusedPVCDeleteListLabel(PersistentVolumeClaim pvc) {
 
         if (pvc.getMetadata().getLabels() == null) {
             return "null";
         } else {
-            result = pvc.getMetadata().getLabels().get("unused-delete-list");
+            String result = pvc.getMetadata().getLabels().get("unused-delete-list");
+            return (result == null) ? "null" : result;
         }
-
-        return (result == null) ? "null" : result;
     }
 
-    public String checkUnusedPVDeleteListLabel(PersistentVolume pv) {
-
-        String result = "";
+    /**
+     * PV의 unused-delete-list label 존재 여부와 value 검사
+     * @param pv pv
+     * @return String
+     */
+    private String checkUnusedPVDeleteListLabel(PersistentVolume pv) {
 
         if (pv.getMetadata().getLabels() == null) {
             return "null";
         } else {
-             result = pv.getMetadata().getLabels().get("unused-delete-list");
+            String result = pv.getMetadata().getLabels().get("unused-delete-list");
+            return (result == null) ? "null" : result;
         }
-
-        return (result == null) ? "null" : result;
     }
 
-    //PVC가 세가지 조건을 충족하는지 여부를 검사
-    public Boolean checkPVCFields(PersistentVolumeClaim pvc, String storageclassname, String status, String label) {
+    /**
+     * PVC의 조건 만족 여부 검사
+     * @param pvc pvc
+     * @param storageclassname (조건 1) storageClassname
+     * @param status (조건 2) status.phase
+     * @param label (조건 3) label (key:value / key)
+     * @return boolean
+     */
+    private boolean checkPVCFields(PersistentVolumeClaim pvc, String storageclassname, String status, String label) {
 
-        Boolean result = true;
+        boolean result = true;
 
         if (storageclassname != null){
-            result = result && pvc.getSpec().getStorageClassName() != null && pvc.getSpec().getStorageClassName().equals(storageclassname);
+            String pvcStorageClassName = pvc.getSpec().getStorageClassName();
+            result = result && pvcStorageClassName != null && pvcStorageClassName.equals(storageclassname);
         }
         if (status != null) {
-            result = result && pvc.getStatus().getPhase().equals(status);
+            String pvcStatus = pvc.getStatus().getPhase();
+            result = result && pvcStatus.equals(status);
         }
         if (label != null) {
             if (pvc.getMetadata().getLabels() == null) {
                 result = false;
             } else {
-                String[] key_value = label.split("=");
-                if (key_value.length > 1) { //value도 있는 경우
-                    result = result && pvc.getMetadata().getLabels().get(key_value[0]) != null && pvc.getMetadata().getLabels().get(key_value[0]).equals(key_value[1]);
+                String[] pvcLabel = label.split(":");
+                String pvcLabelKey = pvcLabel[0];
+                String pvcLabelValueReal = pvc.getMetadata().getLabels().get(pvcLabelKey);
+                if (pvcLabel.length > 1) { //value도 있는 경우
+                    String pvcLabelValue = pvcLabel[1];
+                    result = result && pvcLabelValueReal != null && pvcLabelValueReal.equals(pvcLabelValue);
                 } else {
-                    result = result && pvc.getMetadata().getLabels().get(key_value[0]) != null;
+                    result = result && pvcLabelValueReal != null;
                 }
             }
         }
-
         return result;
     }
 
-    public Boolean checkPVFields(PersistentVolume pv, String storageclassname, String status, String label) {
+    /**
+     * PV 조건 만족 여부 검사
+     * @param pv pv
+     * @param storageclassname (조건 1) storageClassname
+     * @param status (조건 2) status.phase
+     * @param label (조건 3) label (key:value / key)
+     * @return boolean
+     */
+    private boolean checkPVFields(PersistentVolume pv, String storageclassname, String status, String label) {
 
-        Boolean result = true;
+        boolean result = true;
 
         if (storageclassname != null){
-            result = result && pv.getSpec().getStorageClassName() != null && pv.getSpec().getStorageClassName().equals(storageclassname);
+            String pvStorageClassName = pv.getSpec().getStorageClassName();
+            result = result && pvStorageClassName != null && pvStorageClassName.equals(storageclassname);
         }
         if (status != null) {
-            result = result && pv.getStatus().getPhase().equals(status);
+            String pvStatus = pv.getStatus().getPhase();
+            result = result && pvStatus.equals(status);
         }
         if (label != null) {
             if (pv.getMetadata().getLabels() == null) {
                 result = false;
             } else {
-                String[] key_value = label.split("=");
-                if (key_value.length > 1) { //value도 있는 경우
-                    result = result && pv.getMetadata().getLabels().get(key_value[0]) != null && pv.getMetadata().getLabels().get(key_value[0]).equals(key_value[1]);
+                String[] pvLabel = label.split(":");
+                String pvLabelKey = pvLabel[0];
+                String pvLabelValueReal = pv.getMetadata().getLabels().get(pvLabelKey);
+                if (pvLabel.length > 1) { //value도 있는 경우
+                    String pvLabelValue = pvLabel[1];
+                    result = result && pvLabelValueReal != null && pvLabelValueReal.equals(pvLabelValue);
                 } else {
-                    result = result && pv.getMetadata().getLabels().get(key_value[0]) != null;
+                    result = result && pvLabelValueReal != null;
                 }
             }
         }
-
         return result;
     }
 
-    public String putLabelOnPVCList(PersistentVolumeClaimList  pvc_list, String type, String storageclassname, String status, String label) {
+    /**
+     * PVC의 'unused-delete-list' label의 value를 desired value로 변경하고, 변경 여부 반환
+     * @param pvc pvc
+     * @param type 'unused-delete-list' label의 desired value
+     * @return boolean
+     * @see #checkUnusedPVCDeleteListLabel(PersistentVolumeClaim)
+     */
+    private boolean checkPVCLabelEdited(PersistentVolumeClaim pvc, String type) {
 
-        AtomicInteger count = new AtomicInteger();
-        JSONArray mountedByPods = findAllPVCMountedByPod();
+        String pvcName = pvc.getMetadata().getName();
+        String pvcNamespace = pvc.getMetadata().getNamespace();
 
-        pvc_list.getItems().forEach(
-            pvc -> {
-                if (isUnusedPVC(mountedByPods, pvc)){
-                    if (checkPVCFields(pvc, storageclassname, status, label)){
-                        String pvc_name = pvc.getMetadata().getName();
-                        String pvc_namespace = pvc.getMetadata().getNamespace();
-                        if (type.equals("exclude")) {
-                            PersistentVolumeClaim pvc_temp = client.persistentVolumeClaims().inNamespace(pvc_namespace).withName(pvc_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "exclude").endMetadata().done();
-                            if (checkUnusedPVCDeleteListLabel(pvc_temp).equals("exclude")) {
-                                count.incrementAndGet();
-                            }
-                        } else if (type.equals("include")) {
-                            if (!checkUnusedPVCDeleteListLabel(pvc).equals("exclude")) {
-                                PersistentVolumeClaim pvc_temp = client.persistentVolumeClaims().inNamespace(pvc_namespace).withName(pvc_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "include").endMetadata().done();
-                                if (checkUnusedPVCDeleteListLabel(pvc_temp).equals("include")) {
-                                    count.incrementAndGet();
-                                }
-                            }
-                        } else if (type.equals("release")) {
-                            PersistentVolumeClaim pvc_temp = client.persistentVolumeClaims().inNamespace(pvc_namespace).withName(pvc_name).edit().editMetadata().removeFromLabels("unused-delete-list").endMetadata().done();
-                            if (checkUnusedPVCDeleteListLabel(pvc_temp).equals("null")) {
-                                count.incrementAndGet();
-                            }
-                        }
-                    }
+        if (type.equals("exclude")) {
+            if (!checkUnusedPVCDeleteListLabel(pvc).equals("exclude")) {
+                PersistentVolumeClaim pvcTemp = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).edit().editOrNewMetadata().addToLabels("unused-delete-list", "exclude").endMetadata().done();
+                if (checkUnusedPVCDeleteListLabel(pvcTemp).equals("exclude")) {
+                    return true;
                 }
             }
-        );
-
-        return Integer.toString(count.get())+" pvcs "+type+"d";
-    }
-
-    public String putLabelOnPVList(PersistentVolumeList pv_list, String type, String storageclassname, String status, String label) {
-
-        AtomicInteger count = new AtomicInteger();
-        JSONArray mountedByPods = findAllPVCMountedByPod();
-
-        pv_list.getItems().forEach(
-            pv -> {
-                if (isUnusedPV(mountedByPods, pv)){
-                    if (checkPVFields(pv, storageclassname, status, label)){
-                        String pv_name = pv.getMetadata().getName();
-                        if (type.equals("exclude")) {
-                            PersistentVolume pv_temp = client.persistentVolumes().withName(pv_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "exclude").endMetadata().done();
-                            if (checkUnusedPVDeleteListLabel(pv_temp).equals("exclude")) {
-                                count.incrementAndGet();
-                            }
-                        } else if (type.equals("include")) {
-                            if (!checkUnusedPVDeleteListLabel(pv).equals("exclude")) {
-                                PersistentVolume pv_temp = client.persistentVolumes().withName(pv_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "include").endMetadata().done();
-                                if (checkUnusedPVDeleteListLabel(pv_temp).equals("include")) {
-                                    count.incrementAndGet();
-                                }
-                            }
-                        } else if (type.equals("release")) {
-                            PersistentVolume pv_temp = client.persistentVolumes().withName(pv_name).edit().editMetadata().removeFromLabels("unused-delete-list").endMetadata().done();
-                            if (checkUnusedPVDeleteListLabel(pv_temp).equals("null")) {
-                                count.incrementAndGet();
-                            }
-                        }
-                    }
+        } else if (type.equals("include")) {
+            if (checkUnusedPVCDeleteListLabel(pvc).equals("null")) {
+                PersistentVolumeClaim pvcTemp = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).edit().editOrNewMetadata().addToLabels("unused-delete-list", "include").endMetadata().done();
+                if (checkUnusedPVCDeleteListLabel(pvcTemp).equals("include")) {
+                    return true;
                 }
             }
-        );
-
-        return Integer.toString(count.get())+" pvs "+type+"d";
+        } else if (type.equals("release")) {
+            if (!checkUnusedPVCDeleteListLabel(pvc).equals("null")) {
+                PersistentVolumeClaim pvcTemp = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).edit().editMetadata().removeFromLabels("unused-delete-list").endMetadata().done();
+                if (checkUnusedPVCDeleteListLabel(pvcTemp).equals("null")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
-    public JSONObject putLabelOnUnusedAll(String type, String storageclassname, String status, String label) {
+    /**
+     * PV의 'unused-delete-list' label의 value를 desired value로 변경하고, 변경 여부 반환
+     * @param pv pv
+     * @param type 'unused-delete-list' label의 desired value
+     * @return boolean
+     * @see #checkUnusedPVDeleteListLabel(PersistentVolume)
+     */
+    private boolean checkPVLabelEdited(PersistentVolume pv, String type) {
+
+        String pvName = pv.getMetadata().getName();
+
+        if (type.equals("exclude")) {
+            if (!checkUnusedPVDeleteListLabel(pv).equals("exclude")) {
+                PersistentVolume pvTemp = client.persistentVolumes().withName(pvName).edit().editOrNewMetadata().addToLabels("unused-delete-list", "exclude").endMetadata().done();
+                if (checkUnusedPVDeleteListLabel(pvTemp).equals("exclude")) {
+                    return true;
+                }
+            }
+        } else if (type.equals("include")) {
+            if (checkUnusedPVDeleteListLabel(pv).equals("null")) {
+                PersistentVolume pvTemp = client.persistentVolumes().withName(pvName).edit().editOrNewMetadata().addToLabels("unused-delete-list", "include").endMetadata().done();
+                if (checkUnusedPVDeleteListLabel(pvTemp).equals("include")) {
+                    return true;
+                }
+            }
+        } else if (type.equals("release")) {
+            if (!checkUnusedPVDeleteListLabel(pv).equals("null")) {
+                PersistentVolume pvTemp = client.persistentVolumes().withName(pvName).edit().editMetadata().removeFromLabels("unused-delete-list").endMetadata().done();
+                if (checkUnusedPVDeleteListLabel(pvTemp).equals("null")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * PVC List의 각 PVC의 Unused 여부, 조건 만족 여부 검사<br>
+     * 'unused-delete-list'를 key로 가지는 label의 value를 변경하고, 변경 성공한 수 반환
+     * @param pvcList pvc list
+     * @param type 'unused-delete-list' label의 desired value
+     * @param storageclassname (조건 1) storageClassname
+     * @param status (조건 2) status.phase
+     * @param label (조건 3) label (key:value / key)
+     * @return String
+     * @see #isUnusedPVC(List, PersistentVolumeClaim)
+     * @see #checkPVCFields(PersistentVolumeClaim, String, String, String)
+     * @see #checkPVCLabelEdited(PersistentVolumeClaim, String)
+     */
+    private String putLabelOnPVCList(PersistentVolumeClaimList pvcList, String type, String storageclassname, String status, String label) {
+
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+
+        long count = pvcList.getItems()
+            .stream()
+            .filter(pvc -> isUnusedPVC(mountedPodList, pvc))
+            .filter(pvc -> checkPVCFields(pvc, storageclassname, status, label))
+            .filter(pvc -> checkPVCLabelEdited(pvc, type))
+            .count();
+
+        return count + " pvcs " + type + "d";
+    }
+
+    /**
+     * PV List의 각 PV의 Unused 여부, 조건 만족 여부 검사<br>
+     * 'unused-delete-list'를 key로 가지는 label의 value를 변경하고, 변경 성공한 수 반환
+     * @param pvList pv list
+     * @param type 'unused-delete-list' label의 desired value
+     * @param storageclassname (조건 1) storageClassname
+     * @param status (조건 2) status.phase
+     * @param label (조건 3) label (key:value / key)
+     * @return String
+     * @see #isUnusedPV(List, PersistentVolume)
+     * @see #checkPVFields(PersistentVolume, String, String, String)
+     * @see #checkPVLabelEdited(PersistentVolume, String)
+     */
+    private String putLabelOnPVList(PersistentVolumeList pvList, String type, String storageclassname, String status, String label) {
+
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+
+        long count = pvList.getItems()
+            .stream()
+            .filter(pv -> isUnusedPV(mountedPodList, pv))
+            .filter(pv -> checkPVFields(pv, storageclassname, status, label))
+            .filter(pv -> checkPVLabelEdited(pv, type))
+            .count();
+
+        return count + " pvs " + type + "d";
+    }
+    
+    /**
+     * client가 조회할 수 있는 모든 Resource에 labe 추가/수정<br>
+     * label의 key : 'unused-delete-list' / value : type 변수 값<br>
+     * putLabelOnUnusedPVCList(), putLabelOnUnusedPVList() - (조건 1~3) 검사, label 추가
+     * @param type 'unused-delete-list' label의 desired value
+     * @param storageclassname (조건 1) storageClassname
+     * @param status (조건 2) status.phase
+     * @param label (조건 3) label (key:value / key)
+     * @return ResponseResult
+     * @see #putLabelOnUnusedPVCList(String, String, String, String, String)
+     * @see #putLabelOnUnusedPVList(String, String, String, String)
+     */
+    public ResponseResult putLabelOnUnusedAll(String type, String storageclassname, String status, String label) {
         
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
+        String resultPVC = putLabelOnUnusedPVCList(type, storageclassname, status, label).getResult();
+        String resultPV = putLabelOnUnusedPVList(type, storageclassname, status, label).getResult();
+        String result = resultPVC + " / " + resultPV;
 
-        String result = "";
-        String result_pvc = ((JSONObject)putLabelOnUnusedPVCList(type, storageclassname, status, label).get("data")).get("result").toString();
-        String result_pv = ((JSONObject)putLabelOnUnusedPVList(type, storageclassname, status, label).get("data")).get("result").toString();
-        result += result_pvc + " / " + result_pv;
-
-        data.put("result", result);
-        response.put("data", data);
+        ResponseResult response = new ResponseResult(APIURL, result);
         return response;
     }
 
-    public JSONObject putLabelOnUnusedPVCList(String namespace, String type, String storageclassname, String status, String label) {
+    /**
+     * client가 조회할 수 있는 모든 PVC에 labe 추가/수정<br>
+     * label의 key : 'unused-delete-list' / value : type 변수 값<br>
+     * type 값이 exclude, include, release가 아닌 경우 BAD_REQUEST<br>
+     * 검출 대상이 되는 PVC list 구성 - namespace 검사<br>
+     * putLabelOnPVCList() - (조건 1~3) 검사
+     * @param namespace namespace
+     * @param type 'unused-delete-list' label의 desired value
+     * @param storageclassname (조건 1) storageClassname
+     * @param status (조건 2) status.phase
+     * @param label (조건 3) label (key:value / key)
+     * @return ResponseResult
+     * @see #putLabelOnPVCList(PersistentVolumeClaimList, String, String, String, String)
+     */
+    public ResponseResult putLabelOnUnusedPVCList(String namespace, String type, String storageclassname, String status, String label) {
 
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
         String result;
 
         if (type.equals("exclude") || type.equals("include") || type.equals("release")) {
-            PersistentVolumeClaimList pvc_list = client.persistentVolumeClaims().inNamespace(namespace).list();
-            result = putLabelOnPVCList(pvc_list, type, storageclassname, status, label);
+            PersistentVolumeClaimList pvcList = client.persistentVolumeClaims().inNamespace(namespace).list();
+            result = putLabelOnPVCList(pvcList, type, storageclassname, status, label);
         } else {
-            result = "bad request / type = [ exclude / include / release ]";
+            result = TYPE_BAD_REQUEST;
         }
         
-        data.put("selfLink", APIURL_NS+namespace+"/pvcs");
-        data.put("result", result);
-        response.put("data", data);
+        ResponseResult response = new ResponseResult(APIURL_NS + namespace + "/pvcs", result);
         return response;
     }
 
-    public JSONObject putLabelOnUnusedPVCList(String type, String storageclassname, String status, String label) {
+    /**
+     * client가 조회할 수 있는 모든 PVC에 labe 추가/수정<br>
+     * label의 key : 'unused-delete-list' / value : type 변수 값<br>
+     * type의 값이 exclude, include, release가 아닌 경우 BAD_REQUEST<br>
+     * putLabelOnPVCList() - (조건 1~3) 검사
+     * @param type 'unused-delete-list' label의 desired value
+     * @param storageclassname (조건 1) storageClassname
+     * @param status (조건 2) status.phase
+     * @param label (조건 3) label (key:value / key)
+     * @return ResponseResult
+     * @see #putLabelOnPVCList(PersistentVolumeClaimList, String, String, String, String)
+     */
+    public ResponseResult putLabelOnUnusedPVCList(String type, String storageclassname, String status, String label) {
         
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
         String result;
 
         if (type.equals("exclude") || type.equals("include") || type.equals("release")) {
-            PersistentVolumeClaimList pvc_list = client.persistentVolumeClaims().inAnyNamespace().list();
-            result = putLabelOnPVCList(pvc_list, type, storageclassname, status, label);
+            PersistentVolumeClaimList pvcList = client.persistentVolumeClaims().inAnyNamespace().list();
+            result = putLabelOnPVCList(pvcList, type, storageclassname, status, label);
         } else {
-            result = "bad request / type = [ exclude / include / release ]";
+            result = TYPE_BAD_REQUEST;
         }
         
-        data.put("selfLink", APIURL_PVCS);
-        data.put("result", result);
-        response.put("data", data);
+        ResponseResult response = new ResponseResult(APIURL_PVCS, result);
         return response;
     }
 
-    public JSONObject putLabelOnUnusedPVList(String type, String storageclassname, String status, String label) {
+    /**
+     * client가 조회할 수 있는 모든 PV에 labe 추가/수정<br>
+     * label의 key : 'unused-delete-list' / value : type 변수 값<br>
+     * type의 값이 exclude, include, release가 아닌 경우 BAD_REQUEST<br>
+     * putLabelOnPVList() - (조건 1~3) 검사
+     * @param type 'unused-delete-list' label의 desired value
+     * @param storageclassname (조건 1) storageClassname
+     * @param status (조건 2) status.phase
+     * @param label (조건 3) label (key:value / key)
+     * @return ResponseResult
+     * @see #putLabelOnPVList(PersistentVolumeList, String, String, String, String)
+     */
+    public ResponseResult putLabelOnUnusedPVList(String type, String storageclassname, String status, String label) {
         
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
         String result;
 
         if (type.equals("exclude") || type.equals("include") || type.equals("release")) {
-            PersistentVolumeList pv_list = client.persistentVolumes().list();
-            result = putLabelOnPVList(pv_list, type, storageclassname, status, label);
+            PersistentVolumeList pvList = client.persistentVolumes().list();
+            result = putLabelOnPVList(pvList, type, storageclassname, status, label);
         } else {
-            result = "bad request / type = [ exclude / include / release ]";
+            result = TYPE_BAD_REQUEST;
         }
         
-        data.put("selfLink", APIURL_PVS);
-        data.put("result", result);
-        response.put("data", data);
+        ResponseResult response = new ResponseResult(APIURL_PVS, result);
         return response;
-
     }
 
-    public JSONObject putLabelOnUnusedPVC(String namespace, String pvc_name, String type) {
+    /**
+     * 단일 PVC 존재 여부, Unused 여부 검사<br>
+     * PVC는 name, namespace로 특정<br>
+     * Unused인 경우 PVC에 label 추가/수정<br>
+     * label의 key : 'unused-delete-list' / value : type 변수 값<br>
+     * 'unused-delete-list' label의 current value가 "exclude"이고 desired value가 "include"인 경우 수정되지 않음<br>
+     * type의 값이 exclude, include, release가 아닌 경우 BAD_REQUEST
+     * @param pvcNamespace pvc namespace
+     * @param pvcName pvc name
+     * @param type 'unused-delete-list' label의 desired value
+     * @return ResponseResult
+     * @see #isUnusedPVC(List, PersistentVolumeClaim)
+     */
+    public ResponseResult putLabelOnUnusedPVC(String pvcNamespace, String pvcName, String type) {
 
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-        String result = "";
-
-        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).get();
-        JSONArray mountedByPods = findAllPVCMountedByPod();
+        String result;
+        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).get();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
         if (pvc == null) {
-            result = pvc_name+" not found";
-        } else if (!isUnusedPVC(mountedByPods, pvc)){
-            result = pvc_name+" is used resource";
-        } else {
+            result = pvcName + " not found";
+        } else if (isUnusedPVC(mountedPodList, pvc)){
             if (type.equals("exclude")) {
                 if (checkUnusedPVCDeleteListLabel(pvc).equals("exclude")) {
                     result = "Already excluded";
                 } else {
-                    pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "exclude").endMetadata().done();
+                    pvc = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).edit().editOrNewMetadata().addToLabels("unused-delete-list", "exclude").endMetadata().done();
                     if (checkUnusedPVCDeleteListLabel(pvc).equals("exclude")) {
                         result = "excluded";
                     } else {
@@ -726,11 +948,11 @@ public class UnusedResourceService {
                 }
             } else if (type.equals("include")) {
                 if (checkUnusedPVCDeleteListLabel(pvc).equals("exclude")) {
-                    result = "Can't include "+pvc_name+" / "+pvc_name+" is excluded";
+                    result = "Can't include " + pvcName + " / " + pvcName + " is excluded";
                 } else if (checkUnusedPVCDeleteListLabel(pvc).equals("include")) {
                     result = "Already included";
                 } else {
-                    pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "include").endMetadata().done();
+                    pvc = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).edit().editOrNewMetadata().addToLabels("unused-delete-list", "include").endMetadata().done();
                     if (checkUnusedPVCDeleteListLabel(pvc).equals("include")) {
                         result = "included";
                     } else {
@@ -738,10 +960,10 @@ public class UnusedResourceService {
                     }
                 }
             } else if (type.equals("release")) {
-                if (checkUnusedPVCDeleteListLabel(pvc).equals("release")) {
-                    result = "Already included";
+                if (checkUnusedPVCDeleteListLabel(pvc).equals("null")) {
+                    result = "Already released";
                 } else {
-                    pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(pvc_name).edit().editMetadata().removeFromLabels("unused-delete-list").endMetadata().done();
+                    pvc = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).edit().editMetadata().removeFromLabels("unused-delete-list").endMetadata().done();
                     if (checkUnusedPVCDeleteListLabel(pvc).equals("null")) {
                         result = "released";
                     } else {
@@ -750,35 +972,42 @@ public class UnusedResourceService {
                 }
                 
             } else {
-                result = "bad request / type = [ exclude / include / release ]";
+                result = TYPE_BAD_REQUEST;
             }
+        } else {
+            result = pvcName + " is used resource";
         }
         
-        data.put("selfLink", APIURL_NS+namespace+"/pvcs/"+pvc_name);
-        data.put("result", result);
-        response.put("data", data);
+        ResponseResult response = new ResponseResult(APIURL_NS + pvcNamespace + "/pvcs/" + pvcName, result);
         return response;
     }
 
-    public JSONObject putLabelOnUnusedPV(String pv_name, String type) {
+    /**
+     * 단일 PV 존재 여부, Unused 여부 검사<br>
+     * PV는 name으로 특정<br>
+     * Unused인 경우 PV에 label 추가/수정<br>
+     * label의 key : 'unused-delete-list' / value : type 변수 값<br>
+     * 'unused-delete-list' label의 current value가 "exclude"이고 desired value가 "include"인 경우 수정되지 않음<br>
+     * type의 값이 exclude, include, release가 아닌 경우 BAD_REQUEST
+     * @param pvName pv name
+     * @param type 'unused-delete-list' label의 desired value
+     * @return ResponseResult
+     * @see #isUnusedPV(List, PersistentVolume)
+     */
+    public ResponseResult putLabelOnUnusedPV(String pvName, String type) {
 
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-        String result = "";
-
-        PersistentVolume pv = client.persistentVolumes().withName(pv_name).get();
-        JSONArray mountedByPods = findAllPVCMountedByPod();
+        String result;
+        PersistentVolume pv = client.persistentVolumes().withName(pvName).get();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
         if (pv == null) {
-            result = pv_name+" not found";
-        } else if (!isUnusedPV(mountedByPods, pv)){
-            result = pv_name+" is used resource";
-        } else {
+            result = pvName + " not found";
+        } else if (isUnusedPV(mountedPodList, pv)){
             if (type.equals("exclude")) {
                 if (checkUnusedPVDeleteListLabel(pv).equals("exclude")) {
                     result = "Already excluded";
                 } else {
-                    pv = client.persistentVolumes().withName(pv_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "exclude").endMetadata().done();
+                    pv = client.persistentVolumes().withName(pvName).edit().editOrNewMetadata().addToLabels("unused-delete-list", "exclude").endMetadata().done();
                     if (checkUnusedPVDeleteListLabel(pv).equals("exclude")) {
                         result = "excluded";
                     } else {
@@ -787,11 +1016,11 @@ public class UnusedResourceService {
                 }
             } else if (type.equals("include")) {
                 if (checkUnusedPVDeleteListLabel(pv).equals("exclude")) {
-                    result = "Can't include "+pv_name+" / "+pv_name+" is excluded";
+                    result = "Can't include " + pvName + " / " + pvName + " is excluded";
                 } else if (checkUnusedPVDeleteListLabel(pv).equals("include")) {
                     result = "Already included";
                 } else {
-                    pv = client.persistentVolumes().withName(pv_name).edit().editOrNewMetadata().addToLabels("unused-delete-list", "include").endMetadata().done();
+                    pv = client.persistentVolumes().withName(pvName).edit().editOrNewMetadata().addToLabels("unused-delete-list", "include").endMetadata().done();
                     if (checkUnusedPVDeleteListLabel(pv).equals("include")) {
                         result = "included";
                     } else {
@@ -799,10 +1028,10 @@ public class UnusedResourceService {
                     }
                 }
             } else if (type.equals("release")) {
-                if (checkUnusedPVDeleteListLabel(pv).equals("release")) {
-                    result = "Already included";
+                if (checkUnusedPVDeleteListLabel(pv).equals("null")) {
+                    result = "Already released";
                 } else {
-                    pv = client.persistentVolumes().withName(pv_name).edit().editMetadata().removeFromLabels("unused-delete-list").endMetadata().done();
+                    pv = client.persistentVolumes().withName(pvName).edit().editMetadata().removeFromLabels("unused-delete-list").endMetadata().done();
                     if (checkUnusedPVDeleteListLabel(pv).equals("null")) {
                         result = "released";
                     } else {
@@ -811,132 +1040,224 @@ public class UnusedResourceService {
                 }
                 
             } else {
-                result = "bad request / type = [ exclude / include / release ]";
+                result = TYPE_BAD_REQUEST;
+            }
+        } else {
+            result = pvName + " is used resource";
+        }
+
+        ResponseResult response = new ResponseResult(APIURL_PVS + "/" + pvName, result);
+        return response;
+    }
+
+
+    /**
+     * 'unused-delete-list : include' label을 가지는 Kubernetes Resource를 삭제하는 command로 응답 구성
+     * @param type Kubernetes Resource 종류
+     * @return ResponseResult
+     */
+    public ResponseResult deleteUnusedAllScript(String type) {
+
+        String command = "kubectl delete " + type + " -l=unused-delete-list=include";
+        String selfLink;
+
+        if (type.equals("pv,pvc")) {
+            selfLink = APIURL;
+        } else if (type.equals("pvc")) {
+            selfLink = APIURL_PVCS;
+        } else {
+            selfLink = APIURL_PVS;
+        }
+
+        ResponseResult response = new ResponseResult(selfLink, command);
+        return response;
+    }
+
+    /**
+     * 특정 namespace의 'unused-delete-list : include' label을 가지는 Kubernetes Resource를 삭제하는 command로 응답 구성
+     * @param type Kubernetes Resource 종류
+     * @param namespace namespace
+     * @return ResponseResult
+     */
+    public ResponseResult deleteUnusedAllScript(String type, String namespace) {
+
+        String command = "kubectl delete " + type + " -l=unused-delete-list=include -n " + namespace;
+        
+        ResponseResult response = new ResponseResult(APIURL_NS + namespace + "/pvcs", command);
+        return response;
+    }
+
+    /**
+     * client가 조회할 수 있는 모든 Resource 중 'unused-delete-list : include' label 가지는 Unused Resource 삭제<br>
+     * deleteUnusedPVC(), deleteUnusedPV()
+     * @return ResponseResult
+     * @see #deleteUnusedPVC()
+     * @see #deleteUnusedPV()
+     */
+    public ResponseResult deleteUnusedAll() {
+
+        String result = "";
+        String resultPVC = deleteUnusedPVC().getResult();
+        String resultPV = deleteUnusedPV().getResult();
+
+        result += resultPVC + " / " + resultPV;
+
+        ResponseResult response = new ResponseResult(APIURL, result);
+        return response;
+    }
+
+    /**
+     * client가 조회할 수 있는 모든 PVC 중 'unused-delete-list : include' label 가지는 Unused PVC 삭제
+     * @return ResponseResult
+     */
+    public ResponseResult deleteUnusedPVC() {
+
+        String result;
+        int count = 0;
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+
+        List<PersistentVolumeClaim> includedPVCList = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", "include").list().getItems();
+        for (PersistentVolumeClaim includedPVC : includedPVCList) {
+            if(isUnusedPVC(mountedPodList, includedPVC)) {
+                String pvcName = includedPVC.getMetadata().getName();
+                String pvcNamespace = includedPVC.getMetadata().getNamespace();
+
+                if (client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).delete()) {
+                    count ++;
+                }
             }
         }
 
-        data.put("selfLink", APIURL_PVS+pv_name);
-        data.put("result", result);
-        response.put("data", data);
-        return response;
-    }
-
-    public JSONObject deleteUnusedAllScript(String type) {
-
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-
-        String command = "kubectl delete "+type+" -l=unused-delete-list=include";
-
-        data.put("command", command);
-        response.put("data", data);
-
-        return response;
-    }
-
-    public JSONObject deleteUnusedAllScript(String type, String namespace) {
-
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-
-        String command = "kubectl delete "+type+" -l=unused-delete-list=include -n "+namespace;
-
-        data.put("command", command);
-        response.put("data", data);
-
-        return response;
-    }
-
-    public JSONObject deleteUnusedAll() {
-
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-
-        String result = "";
-        String result_pvc = ((JSONObject)deleteUnusedPVC().get("data")).get("result").toString();
-        String result_pv = ((JSONObject)deleteUnusedPV().get("data")).get("result").toString();
-        if (!result_pvc.equals("deleted")) {
-            result += "PVC / " + result_pvc;
-        }
-        if (!result_pv.equals("deleted")) {
-            result = "PV / " + result_pv;
+        if (count > 0) {
+            result = count + " PVCs deleted";
+        } else {
+            result = PVC_NOT_FOUND;
         }
 
-        if (result.equals("")) {
-            result = "deleted";
-        }
-        data.put("result", result);
-        response.put("data", data);
-
+        ResponseResult response = new ResponseResult(APIURL_PVCS, result);
         return response;
     }
 
-    public JSONObject deleteUnusedPVC() {
+    /**
+     * 특정 namespace의 PVC 중 'unused-delete-list : include' label 가지는 Unused PVC 삭제
+     * @param namespace namespace 지정
+     * @return ResponseResult
+     */
+    public ResponseResult deleteUnusedPVC(String namespace) {
 
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-        String result = "";
+        String result;
+        int count = 0;
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
-        int size = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", "include").list().getItems().size();
-        if (size > 0) {
-            if (client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", "include").delete()) {
+        List<PersistentVolumeClaim> includedPVCList = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", "include").list().getItems();
+        for (PersistentVolumeClaim includedPVC : includedPVCList) {
+            if(isUnusedPVC(mountedPodList, includedPVC)) {
+                String pvcName = includedPVC.getMetadata().getName();
+                String pvcNamespace = includedPVC.getMetadata().getNamespace();
+
+                if (client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).delete()) {
+                    count ++;
+                }
+            }
+        }
+
+        if (count > 0) {
+            result = count + " PVCs deleted";
+        } else {
+            result = PVC_NOT_FOUND;
+        }
+
+        ResponseResult response = new ResponseResult(APIURL_NS + namespace + "/pvcs", result);
+        return response;
+    }
+
+    /**
+     * client가 조회할 수 있는 모든 PV 중 'unused-delete-list : include' label 가지는 Unused PV 삭제
+     * @return ResponseResult
+     */
+    public ResponseResult deleteUnusedPV() {
+
+        String result;
+        int count = 0;
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+
+        List<PersistentVolume> includedPVList = client.persistentVolumes().withLabel("unused-delete-list", "include").list().getItems();
+        for (PersistentVolume includedPV : includedPVList) {
+            if(isUnusedPV(mountedPodList, includedPV)) {
+                String pvName = includedPV.getMetadata().getName();
+
+                if (client.persistentVolumes().withName(pvName).delete()) {
+                    count ++;
+                }
+            }
+        }
+
+        if (count > 0) {
+            result = count + " PVs deleted";
+        } else {
+            result = PV_NOT_FOUND;
+        }
+
+        ResponseResult response = new ResponseResult(APIURL_PVS, result);
+        return response;
+    }
+
+    /**
+     * 단일 PVC 존재 여부, Unused 여부 검사<br>
+     * PVC는 name, namespace로 특정<br>
+     * Unused인 경우 PVC 삭제
+     * @param pvcNamespace pvc namespace
+     * @param pvcName pvc name
+     * @return ResponseResult
+     */
+    public ResponseResult deleteUnusedPVC(String pvcNamespace, String pvcName) {
+
+        String result;
+        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).get();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+
+        if (pvc == null) {
+            result = pvcName + " not found";
+        } else if (isUnusedPVC(mountedPodList, pvc)) {
+            if (client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).delete()) {
                 result = "deleted";
             } else {
                 result = "failed";
             }
         } else {
-            result = "No results found. Please add unused-delete-list PVC";
+            result = pvcName + " is used resource";
         }
 
-        data.put("result", result);
-        response.put("data", data);
-
+        ResponseResult response = new ResponseResult(APIURL_NS + pvcNamespace + "/pvcs/" + pvcName, result);
         return response;
     }
 
-    public JSONObject deleteUnusedPVC(String namespace) {
+    /**
+     * 단일 PV 존재 여부, Unused 여부 검사<br>
+     * PV는 name으로 특정<br>
+     * Unused인 경우 PV 삭제
+     * @param pvName pv name
+     * @return ResponseResult
+     */
+    public ResponseResult deleteUnusedPV(String pvName) {
 
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-        String result = "";
+        String result;
+        PersistentVolume pv = client.persistentVolumes().withName(pvName).get();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
-        int size = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", "include").list().getItems().size();
-        if (size > 0) {
-            if (client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", "include").delete()) {
+        if (pv == null) {
+            result = pvName + " not found";
+        } else if (isUnusedPV(mountedPodList, pv)){
+            if (client.persistentVolumes().withName(pvName).delete()) {
                 result = "deleted";
             } else {
                 result = "failed";
             }
         } else {
-            result = "No results found. Please add unused-delete-list PVC";
+            result = pvName + " is used resource";
         }
 
-        data.put("result", result);
-        response.put("data", data);
-
-        return response;
-    }
-
-    public JSONObject deleteUnusedPV() {
-
-        JSONObject data = new JSONObject();
-        JSONObject response = new JSONObject();
-        String result = "";
-
-        int size = client.persistentVolumes().withLabel("unused-delete-list", "include").list().getItems().size();
-        if (size > 0) {
-            if (client.persistentVolumes().withLabel("unused-delete-list", "include").delete()) {
-                result = "deleted";
-            } else {
-                result = "failed";
-            }
-        } else {
-            result = "No results found. Please add unused-delete-list PV";
-        }
-
-        data.put("result", result);
-        response.put("data", data);
-
+        ResponseResult response = new ResponseResult(APIURL_PVS + "/" + pvName, result);
         return response;
     }
 }
