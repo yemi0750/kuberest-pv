@@ -129,7 +129,7 @@ public class UnusedResourceService {
      * @param mountedPodList pod spec에 명시된 pvc list
      * @param pvcName pvc name
      * @param pvcNamespace pvc namespace
-     * @return boolean
+     * @return boolean. pvc가 pod spec.volume에 명시된 경우 true
      */
     private boolean isMountedByPod(List<MountedPod> mountedPodList, String pvcName, String pvcNamespace){
 
@@ -152,7 +152,7 @@ public class UnusedResourceService {
      * (검사 기준 2) Pod의 spec에 명시되어 있지 않으면 return true
      * @param mountedPodList pod spec에 명시된 pvc list
      * @param pvc pvc
-     * @return boolean
+     * @return boolean. pvc가 unused인 경우 true
      */
     private boolean isUnusedPVC(List<MountedPod> mountedPodList, PersistentVolumeClaim pvc) {
 
@@ -178,7 +178,7 @@ public class UnusedResourceService {
      * (검사 기준 3) Bound된 PV가 Pod의 spec에 명시되어 있지 않으면 return true
      * @param mountedPodList pod spec에 명시된 pvc list
      * @param pv pv
-     * @return boolean
+     * @return boolean. pv가 unused인 경우 true
      */
     private boolean isUnusedPV(List<MountedPod> mountedPodList, PersistentVolume pv) {
 
@@ -205,7 +205,7 @@ public class UnusedResourceService {
      * PVC가 Unused Resource로 판단된 이유를 반환
      * @param mountedPodList pod spec에 명시된 pvc list
      * @param pvc pvc
-     * @return String
+     * @return String. Unused Type
      */
     private String checkUnusedPVCType(List<MountedPod> mountedPodList, PersistentVolumeClaim pvc) {
 
@@ -227,7 +227,7 @@ public class UnusedResourceService {
      * PV가 Unused Resource로 판단된 이유를 반환
      * @param mountedPodList pod spec에 명시된 pvc list
      * @param pv pv
-     * @return String
+     * @return String. Unused Type
      */
     private String checkUnusedPVType(List<MountedPod> mountedPodList, PersistentVolume pv) {
 
@@ -578,7 +578,7 @@ public class UnusedResourceService {
     /**
      * PVC의 unused-delete-list label 존재 여부와 value 검사
      * @param pvc pvc
-     * @return String
+     * @return String. pvc의 'unused-delete-list' label의 value
      */
     private String checkUnusedPVCDeleteListLabel(PersistentVolumeClaim pvc) {
 
@@ -593,7 +593,7 @@ public class UnusedResourceService {
     /**
      * PV의 unused-delete-list label 존재 여부와 value 검사
      * @param pv pv
-     * @return String
+     * @return String. pv의 'unused-delete-list' label의 value
      */
     private String checkUnusedPVDeleteListLabel(PersistentVolume pv) {
 
@@ -611,7 +611,7 @@ public class UnusedResourceService {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
-     * @return boolean
+     * @return boolean. pvc가 조건 1~3을 만족하는 경우 true
      */
     private boolean checkPVCFields(PersistentVolumeClaim pvc, String storageclassname, String status, String label) {
 
@@ -649,7 +649,7 @@ public class UnusedResourceService {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
-     * @return boolean
+     * @return boolean. pv가 조건 1~3을 만족하는 경우 true
      */
     private boolean checkPVFields(PersistentVolume pv, String storageclassname, String status, String label) {
 
@@ -685,7 +685,7 @@ public class UnusedResourceService {
      * PVC의 'unused-delete-list' label의 value를 desired value로 변경하고, 변경 여부 반환
      * @param pvc pvc
      * @param type 'unused-delete-list' label의 desired value
-     * @return boolean
+     * @return boolean. pvc의 'unused-delete-list' label의 value가 desired value로 변경되면 true
      * @see #checkUnusedPVCDeleteListLabel(PersistentVolumeClaim)
      */
     private boolean checkPVCLabelEdited(PersistentVolumeClaim pvc, String type) {
@@ -722,7 +722,7 @@ public class UnusedResourceService {
      * PV의 'unused-delete-list' label의 value를 desired value로 변경하고, 변경 여부 반환
      * @param pv pv
      * @param type 'unused-delete-list' label의 desired value
-     * @return boolean
+     * @return boolean. pv의 'unused-delete-list' label의 value가 desired value로 변경되면 true
      * @see #checkUnusedPVDeleteListLabel(PersistentVolume)
      */
     private boolean checkPVLabelEdited(PersistentVolume pv, String type) {
@@ -762,7 +762,7 @@ public class UnusedResourceService {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
-     * @return String
+     * @return String. pvcList 각 pvc의 'unused-delete-list' label의 value 변경 결과
      * @see #isUnusedPVC(List, PersistentVolumeClaim)
      * @see #checkPVCFields(PersistentVolumeClaim, String, String, String)
      * @see #checkPVCLabelEdited(PersistentVolumeClaim, String)
@@ -789,7 +789,7 @@ public class UnusedResourceService {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
-     * @return String
+     * @return String. pvList 각 pv의 'unused-delete-list' label의 value 변경 결과
      * @see #isUnusedPV(List, PersistentVolume)
      * @see #checkPVFields(PersistentVolume, String, String, String)
      * @see #checkPVLabelEdited(PersistentVolume, String)
@@ -1088,6 +1088,35 @@ public class UnusedResourceService {
     }
 
     /**
+     * 단일 PVC를 삭제
+     * @param pvc pvc
+     * @return boolean. 삭제 성공 시 return true
+     */
+    private boolean isDeleted(PersistentVolumeClaim pvc) {
+        String pvcName = pvc.getMetadata().getName();
+        String pvcNamespace = pvc.getMetadata().getNamespace();
+
+        if (client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).delete()) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 단일 PV를 삭제
+     * @param pv pv
+     * @return boolean. 삭제 성공 시 true
+     */
+    private boolean isDeleted(PersistentVolume pv) {
+        String pvName = pv.getMetadata().getName();
+
+        if (client.persistentVolumes().withName(pvName).delete()) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * client가 조회할 수 있는 모든 Resource 중 'unused-delete-list : include' label 가지는 Unused Resource 삭제<br>
      * deleteUnusedPVC(), deleteUnusedPV()
      * @return ResponseResult
@@ -1109,24 +1138,19 @@ public class UnusedResourceService {
     /**
      * client가 조회할 수 있는 모든 PVC 중 'unused-delete-list : include' label 가지는 Unused PVC 삭제
      * @return ResponseResult
+     * @see #isUnusedPVC(List, PersistentVolumeClaim)
+     * @see #isDeleted(PersistentVolumeClaim)
      */
     public ResponseResult deleteUnusedPVC() {
 
         String result;
-        int count = 0;
         List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
-        List<PersistentVolumeClaim> includedPVCList = client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", "include").list().getItems();
-        for (PersistentVolumeClaim includedPVC : includedPVCList) {
-            if(isUnusedPVC(mountedPodList, includedPVC)) {
-                String pvcName = includedPVC.getMetadata().getName();
-                String pvcNamespace = includedPVC.getMetadata().getNamespace();
-
-                if (client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).delete()) {
-                    count ++;
-                }
-            }
-        }
+        int count = (int) client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", "include").list().getItems()
+            .stream()
+            .filter(pvc -> isUnusedPVC(mountedPodList, pvc))
+            .filter(pvc -> isDeleted(pvc))
+            .count();
 
         if (count > 0) {
             result = count + " PVCs deleted";
@@ -1142,24 +1166,19 @@ public class UnusedResourceService {
      * 특정 namespace의 PVC 중 'unused-delete-list : include' label 가지는 Unused PVC 삭제
      * @param namespace namespace 지정
      * @return ResponseResult
+     * @see #isUnusedPVC(List, PersistentVolumeClaim)
+     * @see #isDeleted(PersistentVolumeClaim)
      */
     public ResponseResult deleteUnusedPVC(String namespace) {
 
         String result;
-        int count = 0;
         List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
-        List<PersistentVolumeClaim> includedPVCList = client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", "include").list().getItems();
-        for (PersistentVolumeClaim includedPVC : includedPVCList) {
-            if(isUnusedPVC(mountedPodList, includedPVC)) {
-                String pvcName = includedPVC.getMetadata().getName();
-                String pvcNamespace = includedPVC.getMetadata().getNamespace();
-
-                if (client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).delete()) {
-                    count ++;
-                }
-            }
-        }
+        int count = (int) client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", "include").list().getItems()
+            .stream()
+            .filter(pvc -> isUnusedPVC(mountedPodList, pvc))
+            .filter(pvc -> isDeleted(pvc))
+            .count();
 
         if (count > 0) {
             result = count + " PVCs deleted";
@@ -1178,19 +1197,13 @@ public class UnusedResourceService {
     public ResponseResult deleteUnusedPV() {
 
         String result;
-        int count = 0;
         List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
-        List<PersistentVolume> includedPVList = client.persistentVolumes().withLabel("unused-delete-list", "include").list().getItems();
-        for (PersistentVolume includedPV : includedPVList) {
-            if(isUnusedPV(mountedPodList, includedPV)) {
-                String pvName = includedPV.getMetadata().getName();
-
-                if (client.persistentVolumes().withName(pvName).delete()) {
-                    count ++;
-                }
-            }
-        }
+        int count = (int) client.persistentVolumes().withLabel("unused-delete-list", "include").list().getItems()
+            .stream()
+            .filter(pv -> isUnusedPV(mountedPodList, pv))
+            .filter(pv -> isDeleted(pv))
+            .count();
 
         if (count > 0) {
             result = count + " PVs deleted";
