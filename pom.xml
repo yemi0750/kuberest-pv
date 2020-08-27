@@ -10,9 +10,9 @@
 	</parent>
 	<groupId>com.cloudzcp</groupId>
 	<artifactId>kuberest</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
-	<name>demo</name>
-	<description>Demo project for Spring Boot</description>
+	<version>0.0.3-SNAPSHOT</version>
+	<name>Ununsed Kubernetes Resource API</name>
+	<description>Unused Kubernetes Resource API</description>
 
 	<properties>
 		<java.version>14</java.version>

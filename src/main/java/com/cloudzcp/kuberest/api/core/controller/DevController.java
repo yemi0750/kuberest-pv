@@ -1,5 +1,7 @@
 package com.cloudzcp.kuberest.api.core.controller;
 
+import javax.servlet.http.HttpServletRequest;
+
 import com.cloudzcp.kuberest.api.core.model.ResponseMountedPod;
 import com.cloudzcp.kuberest.api.core.service.UnusedResourceService;
 
@@ -22,12 +24,12 @@ public class DevController {
 
     /**
      * client의 모든 Pod를 검사하여 spec.volume에 mount된 pvc 목록 검출
-     * 
+     * @param request HttpServletRequest
      * @return ResponseMountedPod
      */
     @GetMapping(value = "pods")
-    public ResponseMountedPod getMountedPod() {
-        ResponseMountedPod result = unusedResourceService.printPVCMountedByPod();
+    public ResponseMountedPod getMountedPod(HttpServletRequest request) {
+        ResponseMountedPod result = unusedResourceService.printPVCMountedByPod(request);
         return result;
     }
 }

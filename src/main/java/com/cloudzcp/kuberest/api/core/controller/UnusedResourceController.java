@@ -1,5 +1,7 @@
 package com.cloudzcp.kuberest.api.core.controller;
 
+import javax.servlet.http.HttpServletRequest;
+
 import com.cloudzcp.kuberest.api.core.model.ResponseAll;
 import com.cloudzcp.kuberest.api.core.model.ResponseAllInNamespace;
 import com.cloudzcp.kuberest.api.core.model.ResponsePV;
@@ -38,11 +40,12 @@ public class UnusedResourceController {
      * @param storageclassname (조건 2) storageClassname
      * @param status (조건 3) status.phase
      * @param label (조건 4) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseAll
      */
     @GetMapping
-    public ResponseAll getUnusedAll(@RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
-        ResponseAll result = unusedResourceService.findAll(count, deleteList, storageclassname, status, label);
+    public ResponseAll getUnusedAll(@RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label, HttpServletRequest request) {
+        ResponseAll result = unusedResourceService.findAll(count, deleteList, storageclassname, status, label, request);
         return result;
     }
 
@@ -57,11 +60,12 @@ public class UnusedResourceController {
      * @param storageclassname (조건 2) storageClassname
      * @param status (조건 3) status.phase
      * @param label (조건 4) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseAllInNamespace
      */
     @GetMapping(value = "ns/{namespace}")
-    public ResponseAllInNamespace getUnusedAllInNamespace(@PathVariable String namespace, @RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
-        ResponseAllInNamespace result = unusedResourceService.findAll(namespace, count, deleteList, storageclassname, status, label);
+    public ResponseAllInNamespace getUnusedAllInNamespace(@PathVariable String namespace, @RequestParam(required = false)Boolean count, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label, HttpServletRequest request) {
+        ResponseAllInNamespace result = unusedResourceService.findAll(namespace, count, deleteList, storageclassname, status, label, request);
         return result;
     }
 
@@ -73,11 +77,12 @@ public class UnusedResourceController {
      * @param storageclassname (조건 2) storageClassname
      * @param status (조건 3) status.phase
      * @param label (조건 4) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponsePVCList
      */
     @GetMapping(value = "pvcs")
-    public ResponsePVCList getUnusedPVCList(@RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
-        ResponsePVCList result = unusedResourceService.findPVCList(deleteList, storageclassname, status, label);
+    public ResponsePVCList getUnusedPVCList(@RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label, HttpServletRequest request) {
+        ResponsePVCList result = unusedResourceService.findPVCList(deleteList, storageclassname, status, label, request);
         return result;
     }
 
@@ -90,11 +95,12 @@ public class UnusedResourceController {
      * @param storageclassname (조건 2) storageClassname
      * @param status (조건 3) status.phase
      * @param label (조건 4) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponsePVCList
      */
     @GetMapping(value = "ns/{namespace}/pvcs")
-    public ResponsePVCList getUnusedPVCListInNamespace(@PathVariable String namespace, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
-        ResponsePVCList result = unusedResourceService.findPVCList(namespace, deleteList, storageclassname, status, label);
+    public ResponsePVCList getUnusedPVCListInNamespace(@PathVariable String namespace, @RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label, HttpServletRequest request) {
+        ResponsePVCList result = unusedResourceService.findPVCList(namespace, deleteList, storageclassname, status, label, request);
         return result;
     }
 
@@ -106,11 +112,12 @@ public class UnusedResourceController {
      * @param storageclassname (조건 2) storageClassname
      * @param status (조건 3) status.phase
      * @param label (조건 4) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponsePVList
      */
     @GetMapping(value = "pvs")
-    public ResponsePVList getUnusedPVList(@RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
-        ResponsePVList result = unusedResourceService.findPVList(deleteList, storageclassname, status, label);
+    public ResponsePVList getUnusedPVList(@RequestParam(required = false)String deleteList, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label, HttpServletRequest request) {
+        ResponsePVList result = unusedResourceService.findPVList(deleteList, storageclassname, status, label, request);
         return result;
     }
 
@@ -119,11 +126,12 @@ public class UnusedResourceController {
      * 
      * @param namespace pvc namespace
      * @param pvc_name pvc name
+     * @param request HttpServletRequest
      * @return ResponsePVC
      */
     @GetMapping(value = "ns/{namespace}/pvcs/{pvc_name}")
-    public ResponsePVC describeUnusedPVC(@PathVariable String namespace, @PathVariable String pvc_name) {
-        ResponsePVC result = unusedResourceService.findPVC(namespace, pvc_name);
+    public ResponsePVC describeUnusedPVC(@PathVariable String namespace, @PathVariable String pvc_name, HttpServletRequest request) {
+        ResponsePVC result = unusedResourceService.findPVC(namespace, pvc_name, request);
         return result;
     }
 
@@ -131,11 +139,12 @@ public class UnusedResourceController {
      * 단일 Unused PV의 상세 정보 조회
      * 
      * @param pv_name pv name
+     * @param request HttpServletRequest
      * @return ResponsePV
      */
     @GetMapping(value = "pvs/{pv_name}")
-    public ResponsePV describeUnusedPV(@PathVariable String pv_name) {
-        ResponsePV result = unusedResourceService.findPV(pv_name);
+    public ResponsePV describeUnusedPV(@PathVariable String pv_name, HttpServletRequest request) {
+        ResponsePV result = unusedResourceService.findPV(pv_name, request);
         return result;
     }
     
@@ -147,11 +156,12 @@ public class UnusedResourceController {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @PutMapping
-    public ResponseResult putLabelOnUnusedAll(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
-        ResponseResult result = unusedResourceService.putLabelOnUnusedAll(type, storageclassname, status, label);
+    public ResponseResult putLabelOnUnusedAll(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label, HttpServletRequest request) {
+        ResponseResult result = unusedResourceService.putLabelOnUnusedAll(type, storageclassname, status, label, request);
         return result;
     }
 
@@ -163,11 +173,12 @@ public class UnusedResourceController {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @PutMapping(value = "pvcs")
-    public ResponseResult putLabelOnUnusedPVCList(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
-        ResponseResult result = unusedResourceService.putLabelOnUnusedPVCList(type, storageclassname, status, label);
+    public ResponseResult putLabelOnUnusedPVCList(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label, HttpServletRequest request) {
+        ResponseResult result = unusedResourceService.putLabelOnUnusedPVCList(type, storageclassname, status, label, request);
         return result;
     }
     
@@ -180,11 +191,12 @@ public class UnusedResourceController {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label(key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @PutMapping(value = "ns/{namespace}/pvcs")
-    public ResponseResult putLabelOnUnusedPVCListInNamespace(@PathVariable String namespace, @RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
-        ResponseResult result = unusedResourceService.putLabelOnUnusedPVCList(namespace, type, storageclassname, status, label);
+    public ResponseResult putLabelOnUnusedPVCListInNamespace(@PathVariable String namespace, @RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label, HttpServletRequest request) {
+        ResponseResult result = unusedResourceService.putLabelOnUnusedPVCList(namespace, type, storageclassname, status, label, request);
         return result;
     }
 
@@ -196,11 +208,12 @@ public class UnusedResourceController {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label(key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @PutMapping(value = "pvs")
-    public ResponseResult putLabelOnUnusedPVList(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label) {
-        ResponseResult result = unusedResourceService.putLabelOnUnusedPVList(type, storageclassname, status, label);
+    public ResponseResult putLabelOnUnusedPVList(@RequestParam(value = "type")String type, @RequestParam(required = false)String storageclassname, @RequestParam(required = false)String status, @RequestParam(required = false)String label, HttpServletRequest request) {
+        ResponseResult result = unusedResourceService.putLabelOnUnusedPVList(type, storageclassname, status, label, request);
         return result;
     }
 
@@ -210,11 +223,12 @@ public class UnusedResourceController {
      * @param namespace pvc namespace
      * @param pvc_name pvc name
      * @param type unused-delete-list label의 desired value (exclude : 삭제 방지 대상 / include : 삭제 대상 / release : 삭제 지정 해제)
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @PutMapping(value = "ns/{namespace}/pvcs/{pvc_name}")
-    public ResponseResult putLabelOnUnusedPVC(@PathVariable String namespace, @PathVariable String pvc_name, @RequestParam(value = "type")String type) {
-        ResponseResult result = unusedResourceService.putLabelOnUnusedPVC(namespace, pvc_name, type);
+    public ResponseResult putLabelOnUnusedPVC(@PathVariable String namespace, @PathVariable String pvc_name, @RequestParam(value = "type")String type, HttpServletRequest request) {
+        ResponseResult result = unusedResourceService.putLabelOnUnusedPVC(namespace, pvc_name, type, request);
         return result;
     }
     
@@ -223,11 +237,12 @@ public class UnusedResourceController {
      * 
      * @param pv_name pv name
      * @param type unused-delete-list label의 desired value (exclude : 삭제 방지 대상 / include : 삭제 대상 / release : 삭제 지정 해제)
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @PutMapping(value = "pvs/{pv_name}")
-    public ResponseResult putLabelOnUnusedPV(@PathVariable String pv_name, @RequestParam(value = "type")String type) {
-        ResponseResult result = unusedResourceService.putLabelOnUnusedPV(pv_name, type);
+    public ResponseResult putLabelOnUnusedPV(@PathVariable String pv_name, @RequestParam(value = "type")String type, HttpServletRequest request) {
+        ResponseResult result = unusedResourceService.putLabelOnUnusedPV(pv_name, type, request);
         return result;
     }
 
@@ -236,14 +251,15 @@ public class UnusedResourceController {
      * "unused-delete-list : include" label을 가지는 Resource만을 대상으로 함
      * 
      * @param script script 여부
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @DeleteMapping
-    public ResponseResult deleteUnusedAll(@RequestParam(required = false)Boolean script) {
+    public ResponseResult deleteUnusedAll(@RequestParam(required = false)Boolean script, HttpServletRequest request) {
         ResponseResult result;
 
         if (script == null || !script) {
-            result = unusedResourceService.deleteUnusedAll();
+            result = unusedResourceService.deleteUnusedAll(request);
         } else {
             result = unusedResourceService.deleteUnusedAllScript("pv,pvc");
         }
@@ -255,14 +271,15 @@ public class UnusedResourceController {
      * "unused-delete-list : include" label을 가지는 Resource만을 대상으로 함
      * 
      * @param script script 여부
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @DeleteMapping(value = "pvcs")
-    public ResponseResult deleteUnusedPVCList(@RequestParam(required = false)Boolean script) {
+    public ResponseResult deleteUnusedPVCList(@RequestParam(required = false)Boolean script, HttpServletRequest request) {
         ResponseResult result;
 
         if (script == null || !script) {
-            result = unusedResourceService.deleteUnusedPVC();
+            result = unusedResourceService.deleteUnusedPVC(request);
         } else {
             result = unusedResourceService.deleteUnusedAllScript("pvc");
         }
@@ -275,14 +292,15 @@ public class UnusedResourceController {
      * 
      * @param namespace namespace
      * @param script script 여부
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @DeleteMapping(value = "ns/{namespace}/pvcs")
-    public ResponseResult deleteUnusedPVCListInNamespace(@PathVariable String namespace, @RequestParam(required = false)Boolean script) {
+    public ResponseResult deleteUnusedPVCListInNamespace(@PathVariable String namespace, @RequestParam(required = false)Boolean script, HttpServletRequest request) {
         ResponseResult result;
 
         if (script == null || !script) {
-            result = unusedResourceService.deleteUnusedPVC(namespace);
+            result = unusedResourceService.deleteUnusedPVC(namespace, request);
         } else {
             result = unusedResourceService.deleteUnusedAllScript("pvc", namespace);
         }
@@ -294,14 +312,15 @@ public class UnusedResourceController {
      * "unused-delete-list : include" label을 가지는 Resource만을 대상으로 함
      * 
      * @param script script 여부
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @DeleteMapping(value = "pvs")
-    public ResponseResult deleteUnusedPVList(@RequestParam(required = false)Boolean script) {
+    public ResponseResult deleteUnusedPVList(@RequestParam(required = false)Boolean script, HttpServletRequest request) {
         ResponseResult result;
 
         if (script == null || !script) {
-            result = unusedResourceService.deleteUnusedPV();
+            result = unusedResourceService.deleteUnusedPV(request);
         } else {
             result = unusedResourceService.deleteUnusedAllScript("pv");
         }
@@ -313,11 +332,12 @@ public class UnusedResourceController {
      * 
      * @param namespace pvc namespace
      * @param pvc_name pvc name
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @DeleteMapping(value = "ns/{namespace}/pvcs/{pvc_name}")
-    public ResponseResult deleteUnusedPVC(@PathVariable String namespace, @PathVariable String pvc_name){
-        ResponseResult result = unusedResourceService.deleteUnusedPVC(namespace, pvc_name);
+    public ResponseResult deleteUnusedPVC(@PathVariable String namespace, @PathVariable String pvc_name, HttpServletRequest request){
+        ResponseResult result = unusedResourceService.deleteUnusedPVC(namespace, pvc_name, request);
         return result;
     }
 
@@ -325,11 +345,12 @@ public class UnusedResourceController {
      * 단일 Unused PV 삭제
      * 
      * @param pv_name pv name
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
     @DeleteMapping(value = "pvs/{pv_name}")
-    public ResponseResult deleteUnusedPV(@PathVariable String pv_name){
-        ResponseResult result = unusedResourceService.deleteUnusedPV(pv_name);
+    public ResponseResult deleteUnusedPV(@PathVariable String pv_name, HttpServletRequest request){
+        ResponseResult result = unusedResourceService.deleteUnusedPV(pv_name, request);
         return result;
     }
 }

@@ -4,7 +4,11 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpSession;
 
 import com.cloudzcp.kuberest.api.core.model.MountedPVC;
 import com.cloudzcp.kuberest.api.core.model.UnusedPVList;
@@ -42,8 +46,9 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 @Service
 public class UnusedResourceService {
 
-    /** kubernetes client */
-    private KubernetesClient client = new DefaultKubernetesClient();
+    /** kubernetes client Map - contextID:KubernetesClient*/
+    private ConcurrentHashMap<String, KubernetesClient> clientMap = new ConcurrentHashMap<String, KubernetesClient>();
+    private static final String DEFAULT_CONTEXTID = "Default";
 
     private static final String APIURL = "api/v1/unused";
     private static final String APIURL_NS = "api/v1/unused/ns/";
@@ -51,32 +56,77 @@ public class UnusedResourceService {
     private static final String APIURL_PVS = "api/v1/unused/pvs";
     private static final String APIURL_CONFIG = "api/v1/unused/config";
     private static final String TYPE_BAD_REQUEST = "bad request / type = [ exclude / include / release ]";
-    private static final String PVC_NOT_FOUND = "No PVC results found. Please add unused-delete-list PVC";
-    private static final String PV_NOT_FOUND = "No PV results found. Please add unused-delete-list PV";
+    private static final String PVC_NOT_FOUND = "No PVC results found.";
+    private static final String PV_NOT_FOUND = "No PV results found.";
+
+    /** DefaultClient를 생성해서 clientMap에 추가, contextID를 final 변수에 저장 */
+    UnusedResourceService() {
+        KubernetesClient clientTemp = new DefaultKubernetesClient();
+        clientMap.put(DEFAULT_CONTEXTID, clientTemp);
+    }
 
     /**
-     * 특정 config file로 kubernetes client 생성<br>
-     * thread safe
+     * clientMap에서 현재 session의 contextID 값을 key로 가지는 client를 찾아서 반환<br>
+     * session에 contextID 값이 지정되지 않은 경우 DefaultClient를 client로 등록
+     * @param request HttpServletRequest
+     * @return KubernetesClient
+     */
+    private KubernetesClient getClient(HttpServletRequest request) {
+
+        HttpSession session = request.getSession();
+        String contextID = (String) session.getAttribute("contextID");
+
+        if (contextID == null) {
+            session.setAttribute("contextID", DEFAULT_CONTEXTID);
+            contextID = DEFAULT_CONTEXTID;
+        }
+
+        return clientMap.get(contextID);
+    }
+
+    /**
+     * 특정 config file로 kubernetes client 생성
      * @param conf config file
+     * @param request HttpServletRequest
      * @return ResponseConfig
      * @throws IOException IOException
      */
-    public ResponseConfig setConfig(MultipartFile conf) throws IOException {
+    public ResponseConfig setConfig(MultipartFile conf, HttpServletRequest request) throws IOException {
 
         String content = new String(conf.getBytes());
         Config kubeconfig = Config.fromKubeconfig(content);
-        client = new DefaultKubernetesClient(kubeconfig);
+        HttpSession session = request.getSession();
 
-        ResponseConfig response = new ResponseConfig(APIURL_CONFIG, (Object)client.getConfiguration().getContexts());
+        KubernetesClient clientTemp = new DefaultKubernetesClient(kubeconfig);
+        String contextID = clientTemp.getConfiguration().getCurrentContext().getName();
+        session.setAttribute("contextID", contextID);
+        clientMap.put(contextID, clientTemp);
+
+        ResponseConfig response = new ResponseConfig(APIURL_CONFIG, (Object)clientMap.get(contextID).getConfiguration().getContexts());
         return response;
+    }
+
+    /**
+     * client의 context 반환
+     * 
+     * @param request HttpServletRequest
+     * @return ResponseConfig
+     */
+    public ResponseConfig getConfig(HttpServletRequest request) {
+
+        KubernetesClient client = getClient(request);
+        Object clientcontext = client.getConfiguration().getContexts();
+
+        return new ResponseConfig(APIURL_CONFIG, clientcontext);
     }
     
     /**
      * 모든 Pod를 검사하여 spec.volume에 mount된 pvc 목록을 검출<br>
      * podName, podNamespace, mount된 pvcList(pvcName, PV에 bound된 PVName)
+     * @param client KubernetesClient
      * @return ResponseMountedPod
      */
-    private ResponseMountedPod findAllPVCMountedByPod(){
+    private ResponseMountedPod findAllPVCMountedByPod(KubernetesClient client){
 
         List<MountedPod> mountedPodList = new ArrayList<MountedPod>();
 
@@ -88,7 +138,7 @@ public class UnusedResourceService {
             List<MountedPVC> mountedPVCList = pod.getSpec().getVolumes()
                 .stream()
                 .filter(volume -> volume.getPersistentVolumeClaim() != null)
-                .map(volume -> getMountedPVC(podNamespace, volume))
+                .map(volume -> getMountedPVC(podNamespace, volume, client))
                 .collect(Collectors.toList());
             
             if (mountedPVCList.size() > 0) {
@@ -105,21 +155,28 @@ public class UnusedResourceService {
      * volume에서 pvc의 이름(claimName)찾고, 해당 pvc에 bound된 pv 이름 찾아서 객체 생성
      * @param podNamespace pod namespace
      * @param volume pod spec.volumes 목록 중 persistentVolumeClaim
+     * @param client KubernetesClient
      * @return MountedPVC
      */
-    private MountedPVC getMountedPVC (String podNamespace, Volume volume) {
+    private MountedPVC getMountedPVC (String podNamespace, Volume volume, KubernetesClient client) {
+        
         String pvcName = volume.getPersistentVolumeClaim().getClaimName();
         String boundedPVNname = client.persistentVolumeClaims().inNamespace(podNamespace).withName(pvcName).get().getSpec().getVolumeName();
+        
         return new MountedPVC(pvcName, boundedPVNname);
     }
     
     /**
      * findAllPVCMountedByPod()로 검출한 모든 pod의 pvc 목록을 출력
+     * @param request HttpServletRequest
      * @return ResponseMountedPod
-     * @see #findAllPVCMountedByPod()
+     * @see #findAllPVCMountedByPod(KubernetesClient)
      */
-    public ResponseMountedPod printPVCMountedByPod(){
-        ResponseMountedPod response = findAllPVCMountedByPod();
+    public ResponseMountedPod printPVCMountedByPod(HttpServletRequest request){
+
+        KubernetesClient client = getClient(request);
+        ResponseMountedPod response = findAllPVCMountedByPod(client);
+
         return response;
     }
 
@@ -300,6 +357,7 @@ public class UnusedResourceService {
     /**
      * PVC List의 각 PVC의 Unused 여부, 조건 만족 여부 검사<br>
      * 조건을 만족하는 Unused PVC 목록과 수 반환
+     * @param mountedPodList pod spec에 명시된 pvc list
      * @param pvcList pvc list
      * @param count count 출력 여부
      * @param storageclassname (조건 1) storageClassname
@@ -307,11 +365,10 @@ public class UnusedResourceService {
      * @param label (조건 3) label (key:value / key)
      * @return UnusedPVCList
      */
-    private UnusedPVCList getPVCList(PersistentVolumeClaimList pvcList, Boolean count, String storageclassname, String status, String label) {
+    private UnusedPVCList getPVCList(List<MountedPod> mountedPodList, PersistentVolumeClaimList pvcList, Boolean count, String storageclassname, String status, String label) {
 
         List<UnusedPVC> unusedPVCList = new ArrayList<UnusedPVC>();
         HashMap<String, Integer> unusedPVCCount = new HashMap<String, Integer>();
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
         if (count == null || !count) {
             unusedPVCList = pvcList.getItems()
@@ -339,6 +396,7 @@ public class UnusedResourceService {
     /**
      * PV List의 각 PV의 Unused 여부, 조건 만족 여부 검사<br>
      * 조건을 만족하는 Unused PV 목록과 수 반환
+     * @param mountedPodList pod spec에 명시된 pvc list
      * @param pvList pv list
      * @param count count 출력 여부
      * @param storageclassname (조건 1) storageClassname
@@ -346,11 +404,10 @@ public class UnusedResourceService {
      * @param label (조건 3) label (key:value / key)
      * @return UnusedPVList
      */
-    private UnusedPVList getPVList(PersistentVolumeList pvList, Boolean count, String storageclassname, String status, String label) {
+    private UnusedPVList getPVList(List<MountedPod> mountedPodList, PersistentVolumeList pvList, Boolean count, String storageclassname, String status, String label) {
 
         List<UnusedPV> unusedPVList = new ArrayList<UnusedPV>();
         HashMap<String, Integer> unusedPVCount = new HashMap<String, Integer>();
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
         if (count == null || !count) {
             unusedPVList = pvList.getItems()
@@ -385,11 +442,15 @@ public class UnusedResourceService {
      * @param storageclassname (조건 2) storageClassname
      * @param status (조건 3) status.phase
      * @param label (조건 4) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseAll
-     * @see #getPVList(PersistentVolumeList, Boolean, String, String, String)
-     * @see #getPVCList(PersistentVolumeClaimList, Boolean, String, String, String)
+     * @see #getPVList(List, PersistentVolumeList, Boolean, String, String, String)
+     * @see #getPVCList(List, PersistentVolumeClaimList, Boolean, String, String, String)
      */
-    public ResponseAll findAll(Boolean count, String deleteList, String storageclassname, String status, String label){
+    public ResponseAll findAll(Boolean count, String deleteList, String storageclassname, String status, String label, HttpServletRequest request){
+
+        KubernetesClient client = getClient(request);
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         PersistentVolumeClaimList pvcList;
         PersistentVolumeList pvList;
@@ -402,8 +463,8 @@ public class UnusedResourceService {
             pvList = client.persistentVolumes().list();
         }
 
-        UnusedPVList pv = getPVList(pvList, count, storageclassname, status, label);
-        UnusedPVCList pvc = getPVCList(pvcList, count, storageclassname, status, label);
+        UnusedPVList pv = getPVList(mountedPodList, pvList, count, storageclassname, status, label);
+        UnusedPVCList pvc = getPVCList(mountedPodList, pvcList, count, storageclassname, status, label);
         ResponseAll response = new ResponseAll(APIURL, pv, pvc);
         return response;
     }
@@ -419,10 +480,14 @@ public class UnusedResourceService {
      * @param storageclassname (조건 2) storageClassname
      * @param status (조건 3) status.phase
      * @param label (조건 4) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseAllInNamespace
-     * @see #getPVCList(PersistentVolumeClaimList, Boolean, String, String, String)
+     * @see #getPVCList(List, PersistentVolumeClaimList, Boolean, String, String, String)
      */
-    public ResponseAllInNamespace findAll(String namespace, Boolean count, String deleteList, String storageclassname, String status, String label){
+    public ResponseAllInNamespace findAll(String namespace, Boolean count, String deleteList, String storageclassname, String status, String label, HttpServletRequest request){
+
+        KubernetesClient client = getClient(request);
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         PersistentVolumeClaimList pvcList;
 
@@ -432,7 +497,7 @@ public class UnusedResourceService {
             pvcList = client.persistentVolumeClaims().inNamespace(namespace).list();
         }
 
-        UnusedPVCList pvc = getPVCList(pvcList, count, storageclassname, status, label);
+        UnusedPVCList pvc = getPVCList(mountedPodList, pvcList, count, storageclassname, status, label);
         ResponseAllInNamespace response = new ResponseAllInNamespace(APIURL_NS + namespace, pvc);
         return response;
     }
@@ -446,11 +511,15 @@ public class UnusedResourceService {
      * @param storageclassname (조건 2) storageClassname
      * @param status (조건 3) status.phase
      * @param label (조건 4) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponsePVCList
-     * @see #getPVCList(PersistentVolumeClaimList, Boolean, String, String, String)
+     * @see #getPVCList(List, PersistentVolumeClaimList, Boolean, String, String, String)
      */
-    public ResponsePVCList findPVCList(String deleteList, String storageclassname, String status, String label){
+    public ResponsePVCList findPVCList(String deleteList, String storageclassname, String status, String label, HttpServletRequest request){
 
+        KubernetesClient client = getClient(request);
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
+        
         PersistentVolumeClaimList pvcList;
 
         if (deleteList != null) {
@@ -459,7 +528,7 @@ public class UnusedResourceService {
             pvcList = client.persistentVolumeClaims().inAnyNamespace().list();
         }
 
-        UnusedPVCList pvc = getPVCList(pvcList, false, storageclassname, status, label);
+        UnusedPVCList pvc = getPVCList(mountedPodList, pvcList, false, storageclassname, status, label);
         ResponsePVCList response = new ResponsePVCList(APIURL_PVCS, pvc);
         return response;
     }
@@ -473,11 +542,15 @@ public class UnusedResourceService {
      * @param storageclassname (조건) storageClassname
      * @param status (조건 3) status.phase
      * @param label (조건 4) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponsePVCList
-     * @see #getPVCList(PersistentVolumeClaimList, Boolean, String, String, String)
+     * @see #getPVCList(List, PersistentVolumeClaimList, Boolean, String, String, String)
      * 
      */
-    public ResponsePVCList findPVCList(String namespace, String deleteList, String storageclassname, String status, String label){
+    public ResponsePVCList findPVCList(String namespace, String deleteList, String storageclassname, String status, String label, HttpServletRequest request){
+
+        KubernetesClient client = getClient(request);
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         PersistentVolumeClaimList pvcList;
 
@@ -487,7 +560,7 @@ public class UnusedResourceService {
             pvcList = client.persistentVolumeClaims().inNamespace(namespace).list();
         }
 
-        UnusedPVCList pvc = getPVCList(pvcList, false, storageclassname, status, label);
+        UnusedPVCList pvc = getPVCList(mountedPodList, pvcList, false, storageclassname, status, label);
         ResponsePVCList response = new ResponsePVCList(APIURL_NS + namespace+"/pvcs", pvc);
         return response;
     }
@@ -500,10 +573,14 @@ public class UnusedResourceService {
      * @param storageclassname (조건 2) storageClassname
      * @param status (조건 3) status.phase
      * @param label (조건 4) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponsePVList
-     * @see #getPVList(PersistentVolumeList, Boolean, String, String, String)
+     * @see #getPVList(List, PersistentVolumeList, Boolean, String, String, String)
      */
-    public ResponsePVList findPVList(String deleteList, String storageclassname, String status, String label){
+    public ResponsePVList findPVList(String deleteList, String storageclassname, String status, String label, HttpServletRequest request){
+
+        KubernetesClient client = getClient(request);
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         PersistentVolumeList pvList;
 
@@ -513,7 +590,7 @@ public class UnusedResourceService {
             pvList = client.persistentVolumes().list();
         }
 
-        UnusedPVList pv = getPVList(pvList, false, storageclassname, status, label);
+        UnusedPVList pv = getPVList(mountedPodList, pvList, false, storageclassname, status, label);
         ResponsePVList response = new ResponsePVList(APIURL_PVS, pv);
         return response;
     }
@@ -524,15 +601,16 @@ public class UnusedResourceService {
      * Unused인 경우 해당 PVC의 상세 정보와 unusedType으로 응답 구성
      * @param pvcNamespace pvc namespace
      * @param pvcName pvc name
+     * @param request HttpServletRequest
      * @return ResponsePVC
-     * @see #isUnusedPVC(List, PersistentVolumeClaim)
-     * @see #checkUnusedPVCType(List, PersistentVolumeClaim)
      */
-    public ResponsePVC findPVC(String pvcNamespace, String pvcName){
+    public ResponsePVC findPVC(String pvcNamespace, String pvcName, HttpServletRequest request){
+
+        KubernetesClient client = getClient(request);
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         String pvcUnusedType;
         PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).get();
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
         if (pvc == null) {
             pvcUnusedType = pvcName + " not found";
@@ -551,15 +629,16 @@ public class UnusedResourceService {
      * PV는 name으로 특정<br>
      * Unused인 경우 해당 PV의 상세 정보와 unusedType으로 응답 구성
      * @param pvName pv name
+     * @param request HttpServletRequest
      * @return ResponsePV
-     * @see #isUnusedPV(List, PersistentVolume)
-     * @see #checkUnusedPVType(List, PersistentVolume)
      */
-    public ResponsePV findPV(String pvName){
+    public ResponsePV findPV(String pvName, HttpServletRequest request){
         
+        KubernetesClient client = getClient(request);
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
+
         String pvUnusedType;
         PersistentVolume pv = client.persistentVolumes().withName(pvName).get();
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
 
         if (pv == null) {
             pvUnusedType = pvName + " not found";
@@ -685,10 +764,10 @@ public class UnusedResourceService {
      * PVC의 'unused-delete-list' label의 value를 desired value로 변경하고, 변경 여부 반환
      * @param pvc pvc
      * @param type 'unused-delete-list' label의 desired value
+     * @param client KubernetesClient
      * @return boolean. pvc의 'unused-delete-list' label의 value가 desired value로 변경되면 true
-     * @see #checkUnusedPVCDeleteListLabel(PersistentVolumeClaim)
      */
-    private boolean checkPVCLabelEdited(PersistentVolumeClaim pvc, String type) {
+    private boolean checkPVCLabelEdited(PersistentVolumeClaim pvc, String type, KubernetesClient client) {
 
         String pvcName = pvc.getMetadata().getName();
         String pvcNamespace = pvc.getMetadata().getNamespace();
@@ -722,10 +801,10 @@ public class UnusedResourceService {
      * PV의 'unused-delete-list' label의 value를 desired value로 변경하고, 변경 여부 반환
      * @param pv pv
      * @param type 'unused-delete-list' label의 desired value
+     * @param client KubernetesClient
      * @return boolean. pv의 'unused-delete-list' label의 value가 desired value로 변경되면 true
-     * @see #checkUnusedPVDeleteListLabel(PersistentVolume)
      */
-    private boolean checkPVLabelEdited(PersistentVolume pv, String type) {
+    private boolean checkPVLabelEdited(PersistentVolume pv, String type, KubernetesClient client) {
 
         String pvName = pv.getMetadata().getName();
 
@@ -762,23 +841,25 @@ public class UnusedResourceService {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
+     * @param client KubernetesClient
      * @return String. pvcList 각 pvc의 'unused-delete-list' label의 value 변경 결과
-     * @see #isUnusedPVC(List, PersistentVolumeClaim)
-     * @see #checkPVCFields(PersistentVolumeClaim, String, String, String)
-     * @see #checkPVCLabelEdited(PersistentVolumeClaim, String)
      */
-    private String putLabelOnPVCList(PersistentVolumeClaimList pvcList, String type, String storageclassname, String status, String label) {
+    private String putLabelOnPVCList(PersistentVolumeClaimList pvcList, String type, String storageclassname, String status, String label, KubernetesClient client) {
 
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         long count = pvcList.getItems()
             .stream()
             .filter(pvc -> isUnusedPVC(mountedPodList, pvc))
             .filter(pvc -> checkPVCFields(pvc, storageclassname, status, label))
-            .filter(pvc -> checkPVCLabelEdited(pvc, type))
+            .filter(pvc -> checkPVCLabelEdited(pvc, type, client))
             .count();
 
-        return count + " pvcs " + type + "d";
+            if (count > 0) {
+                return count + " pvcs " + type + "d";
+            } else {
+                return PVC_NOT_FOUND;
+            }
     }
 
     /**
@@ -789,23 +870,25 @@ public class UnusedResourceService {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
+     * @param client KubernetesClient
      * @return String. pvList 각 pv의 'unused-delete-list' label의 value 변경 결과
-     * @see #isUnusedPV(List, PersistentVolume)
-     * @see #checkPVFields(PersistentVolume, String, String, String)
-     * @see #checkPVLabelEdited(PersistentVolume, String)
      */
-    private String putLabelOnPVList(PersistentVolumeList pvList, String type, String storageclassname, String status, String label) {
+    private String putLabelOnPVList(PersistentVolumeList pvList, String type, String storageclassname, String status, String label, KubernetesClient client) {
 
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         long count = pvList.getItems()
             .stream()
             .filter(pv -> isUnusedPV(mountedPodList, pv))
             .filter(pv -> checkPVFields(pv, storageclassname, status, label))
-            .filter(pv -> checkPVLabelEdited(pv, type))
+            .filter(pv -> checkPVLabelEdited(pv, type, client))
             .count();
 
-        return count + " pvs " + type + "d";
+        if (count > 0) {
+            return count + " pvs " + type + "d";
+        } else {
+            return PV_NOT_FOUND;
+        }
     }
     
     /**
@@ -816,14 +899,15 @@ public class UnusedResourceService {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseResult
-     * @see #putLabelOnUnusedPVCList(String, String, String, String, String)
-     * @see #putLabelOnUnusedPVList(String, String, String, String)
+     * @see #putLabelOnUnusedPVCList(String, String, String, String, String, HttpServletRequest)
+     * @see #putLabelOnUnusedPVList(String, String, String, String, HttpServletRequest)
      */
-    public ResponseResult putLabelOnUnusedAll(String type, String storageclassname, String status, String label) {
+    public ResponseResult putLabelOnUnusedAll(String type, String storageclassname, String status, String label, HttpServletRequest request) {
         
-        String resultPVC = putLabelOnUnusedPVCList(type, storageclassname, status, label).getResult();
-        String resultPV = putLabelOnUnusedPVList(type, storageclassname, status, label).getResult();
+        String resultPVC = putLabelOnUnusedPVCList(type, storageclassname, status, label, request).getResult();
+        String resultPV = putLabelOnUnusedPVList(type, storageclassname, status, label, request).getResult();
         String result = resultPVC + " / " + resultPV;
 
         ResponseResult response = new ResponseResult(APIURL, result);
@@ -841,16 +925,18 @@ public class UnusedResourceService {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseResult
-     * @see #putLabelOnPVCList(PersistentVolumeClaimList, String, String, String, String)
+     * @see #putLabelOnPVCList(PersistentVolumeClaimList, String, String, String, String, KubernetesClient)
      */
-    public ResponseResult putLabelOnUnusedPVCList(String namespace, String type, String storageclassname, String status, String label) {
+    public ResponseResult putLabelOnUnusedPVCList(String namespace, String type, String storageclassname, String status, String label, HttpServletRequest request) {
 
+        KubernetesClient client = getClient(request);
         String result;
 
         if (type.equals("exclude") || type.equals("include") || type.equals("release")) {
             PersistentVolumeClaimList pvcList = client.persistentVolumeClaims().inNamespace(namespace).list();
-            result = putLabelOnPVCList(pvcList, type, storageclassname, status, label);
+            result = putLabelOnPVCList(pvcList, type, storageclassname, status, label, client);
         } else {
             result = TYPE_BAD_REQUEST;
         }
@@ -868,16 +954,18 @@ public class UnusedResourceService {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseResult
-     * @see #putLabelOnPVCList(PersistentVolumeClaimList, String, String, String, String)
+     * @see #putLabelOnPVCList(PersistentVolumeClaimList, String, String, String, String, KubernetesClient)
      */
-    public ResponseResult putLabelOnUnusedPVCList(String type, String storageclassname, String status, String label) {
-        
+    public ResponseResult putLabelOnUnusedPVCList(String type, String storageclassname, String status, String label, HttpServletRequest request) {
+
+        KubernetesClient client = getClient(request);
         String result;
 
         if (type.equals("exclude") || type.equals("include") || type.equals("release")) {
             PersistentVolumeClaimList pvcList = client.persistentVolumeClaims().inAnyNamespace().list();
-            result = putLabelOnPVCList(pvcList, type, storageclassname, status, label);
+            result = putLabelOnPVCList(pvcList, type, storageclassname, status, label, client);
         } else {
             result = TYPE_BAD_REQUEST;
         }
@@ -895,16 +983,18 @@ public class UnusedResourceService {
      * @param storageclassname (조건 1) storageClassname
      * @param status (조건 2) status.phase
      * @param label (조건 3) label (key:value / key)
+     * @param request HttpServletRequest
      * @return ResponseResult
-     * @see #putLabelOnPVList(PersistentVolumeList, String, String, String, String)
+     * @see #putLabelOnPVList(PersistentVolumeList, String, String, String, String, KubernetesClient)
      */
-    public ResponseResult putLabelOnUnusedPVList(String type, String storageclassname, String status, String label) {
-        
+    public ResponseResult putLabelOnUnusedPVList(String type, String storageclassname, String status, String label, HttpServletRequest request) {
+
+        KubernetesClient client = getClient(request);
         String result;
 
         if (type.equals("exclude") || type.equals("include") || type.equals("release")) {
             PersistentVolumeList pvList = client.persistentVolumes().list();
-            result = putLabelOnPVList(pvList, type, storageclassname, status, label);
+            result = putLabelOnPVList(pvList, type, storageclassname, status, label, client);
         } else {
             result = TYPE_BAD_REQUEST;
         }
@@ -914,23 +1004,23 @@ public class UnusedResourceService {
     }
 
     /**
-     * 단일 PVC 존재 여부, Unused 여부 검사<br>
+     * 단일 PVC 존재 여부, Unused 여부 검사, Unused인 경우 PVC에 label 추가/수정<br>
      * PVC는 name, namespace로 특정<br>
-     * Unused인 경우 PVC에 label 추가/수정<br>
      * label의 key : 'unused-delete-list' / value : type 변수 값<br>
      * 'unused-delete-list' label의 current value가 "exclude"이고 desired value가 "include"인 경우 수정되지 않음<br>
      * type의 값이 exclude, include, release가 아닌 경우 BAD_REQUEST
      * @param pvcNamespace pvc namespace
      * @param pvcName pvc name
      * @param type 'unused-delete-list' label의 desired value
+     * @param request HttpServletRequest
      * @return ResponseResult
-     * @see #isUnusedPVC(List, PersistentVolumeClaim)
      */
-    public ResponseResult putLabelOnUnusedPVC(String pvcNamespace, String pvcName, String type) {
+    public ResponseResult putLabelOnUnusedPVC(String pvcNamespace, String pvcName, String type, HttpServletRequest request) {
 
+        KubernetesClient client = getClient(request);
         String result;
         PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).get();
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         if (pvc == null) {
             result = pvcName + " not found";
@@ -983,22 +1073,22 @@ public class UnusedResourceService {
     }
 
     /**
-     * 단일 PV 존재 여부, Unused 여부 검사<br>
+     * 단일 PV 존재 여부, Unused 여부 검사, Unused인 경우 PV에 label 추가/수정<br>
      * PV는 name으로 특정<br>
-     * Unused인 경우 PV에 label 추가/수정<br>
      * label의 key : 'unused-delete-list' / value : type 변수 값<br>
      * 'unused-delete-list' label의 current value가 "exclude"이고 desired value가 "include"인 경우 수정되지 않음<br>
      * type의 값이 exclude, include, release가 아닌 경우 BAD_REQUEST
      * @param pvName pv name
      * @param type 'unused-delete-list' label의 desired value
+     * @param request HttpServletRequest
      * @return ResponseResult
-     * @see #isUnusedPV(List, PersistentVolume)
      */
-    public ResponseResult putLabelOnUnusedPV(String pvName, String type) {
+    public ResponseResult putLabelOnUnusedPV(String pvName, String type, HttpServletRequest request) {
 
+        KubernetesClient client = getClient(request);
         String result;
         PersistentVolume pv = client.persistentVolumes().withName(pvName).get();
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         if (pv == null) {
             result = pvName + " not found";
@@ -1090,9 +1180,10 @@ public class UnusedResourceService {
     /**
      * 단일 PVC를 삭제
      * @param pvc pvc
+     * @param client KubernetesClient
      * @return boolean. 삭제 성공 시 return true
      */
-    private boolean isDeleted(PersistentVolumeClaim pvc) {
+    private boolean isDeleted(PersistentVolumeClaim pvc, KubernetesClient client) {
         String pvcName = pvc.getMetadata().getName();
         String pvcNamespace = pvc.getMetadata().getNamespace();
 
@@ -1105,9 +1196,10 @@ public class UnusedResourceService {
     /**
      * 단일 PV를 삭제
      * @param pv pv
+     * @param client KubernetesClient
      * @return boolean. 삭제 성공 시 true
      */
-    private boolean isDeleted(PersistentVolume pv) {
+    private boolean isDeleted(PersistentVolume pv, KubernetesClient client) {
         String pvName = pv.getMetadata().getName();
 
         if (client.persistentVolumes().withName(pvName).delete()) {
@@ -1119,15 +1211,16 @@ public class UnusedResourceService {
     /**
      * client가 조회할 수 있는 모든 Resource 중 'unused-delete-list : include' label 가지는 Unused Resource 삭제<br>
      * deleteUnusedPVC(), deleteUnusedPV()
+     * @param request HttpServletRequest
      * @return ResponseResult
-     * @see #deleteUnusedPVC()
-     * @see #deleteUnusedPV()
+     * @see #deleteUnusedPVC(HttpServletRequest)
+     * @see #deleteUnusedPV(HttpServletRequest)
      */
-    public ResponseResult deleteUnusedAll() {
+    public ResponseResult deleteUnusedAll(HttpServletRequest request) {
 
         String result = "";
-        String resultPVC = deleteUnusedPVC().getResult();
-        String resultPV = deleteUnusedPV().getResult();
+        String resultPVC = deleteUnusedPVC(request).getResult();
+        String resultPV = deleteUnusedPV(request).getResult();
 
         result += resultPVC + " / " + resultPV;
 
@@ -1137,19 +1230,19 @@ public class UnusedResourceService {
 
     /**
      * client가 조회할 수 있는 모든 PVC 중 'unused-delete-list : include' label 가지는 Unused PVC 삭제
+     * @param request HttpServletRequest
      * @return ResponseResult
-     * @see #isUnusedPVC(List, PersistentVolumeClaim)
-     * @see #isDeleted(PersistentVolumeClaim)
      */
-    public ResponseResult deleteUnusedPVC() {
+    public ResponseResult deleteUnusedPVC(HttpServletRequest request) {
 
+        KubernetesClient client = getClient(request);
         String result;
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         int count = (int) client.persistentVolumeClaims().inAnyNamespace().withLabel("unused-delete-list", "include").list().getItems()
             .stream()
             .filter(pvc -> isUnusedPVC(mountedPodList, pvc))
-            .filter(pvc -> isDeleted(pvc))
+            .filter(pvc -> isDeleted(pvc, client))
             .count();
 
         if (count > 0) {
@@ -1165,19 +1258,19 @@ public class UnusedResourceService {
     /**
      * 특정 namespace의 PVC 중 'unused-delete-list : include' label 가지는 Unused PVC 삭제
      * @param namespace namespace 지정
+     * @param request HttpServletRequest
      * @return ResponseResult
-     * @see #isUnusedPVC(List, PersistentVolumeClaim)
-     * @see #isDeleted(PersistentVolumeClaim)
      */
-    public ResponseResult deleteUnusedPVC(String namespace) {
+    public ResponseResult deleteUnusedPVC(String namespace, HttpServletRequest request) {
 
+        KubernetesClient client = getClient(request);
         String result;
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         int count = (int) client.persistentVolumeClaims().inNamespace(namespace).withLabel("unused-delete-list", "include").list().getItems()
             .stream()
             .filter(pvc -> isUnusedPVC(mountedPodList, pvc))
-            .filter(pvc -> isDeleted(pvc))
+            .filter(pvc -> isDeleted(pvc, client))
             .count();
 
         if (count > 0) {
@@ -1192,17 +1285,19 @@ public class UnusedResourceService {
 
     /**
      * client가 조회할 수 있는 모든 PV 중 'unused-delete-list : include' label 가지는 Unused PV 삭제
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
-    public ResponseResult deleteUnusedPV() {
+    public ResponseResult deleteUnusedPV(HttpServletRequest request) {
 
+        KubernetesClient client = getClient(request);
         String result;
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         int count = (int) client.persistentVolumes().withLabel("unused-delete-list", "include").list().getItems()
             .stream()
             .filter(pv -> isUnusedPV(mountedPodList, pv))
-            .filter(pv -> isDeleted(pv))
+            .filter(pv -> isDeleted(pv, client))
             .count();
 
         if (count > 0) {
@@ -1216,18 +1311,19 @@ public class UnusedResourceService {
     }
 
     /**
-     * 단일 PVC 존재 여부, Unused 여부 검사<br>
-     * PVC는 name, namespace로 특정<br>
-     * Unused인 경우 PVC 삭제
+     * 단일 PVC 존재 여부, Unused 여부 검사, Unused인 경우 PVC 삭제<br>
+     * PVC는 name, namespace로 특정
      * @param pvcNamespace pvc namespace
      * @param pvcName pvc name
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
-    public ResponseResult deleteUnusedPVC(String pvcNamespace, String pvcName) {
+    public ResponseResult deleteUnusedPVC(String pvcNamespace, String pvcName, HttpServletRequest request) {
 
+        KubernetesClient client = getClient(request);
         String result;
         PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(pvcNamespace).withName(pvcName).get();
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         if (pvc == null) {
             result = pvcName + " not found";
@@ -1246,17 +1342,18 @@ public class UnusedResourceService {
     }
 
     /**
-     * 단일 PV 존재 여부, Unused 여부 검사<br>
-     * PV는 name으로 특정<br>
-     * Unused인 경우 PV 삭제
+     * 단일 PV 존재 여부, Unused 여부 검사, Unused인 경우 PV 삭제<br>
+     * PV는 name으로 특정
      * @param pvName pv name
+     * @param request HttpServletRequest
      * @return ResponseResult
      */
-    public ResponseResult deleteUnusedPV(String pvName) {
+    public ResponseResult deleteUnusedPV(String pvName, HttpServletRequest request) {
 
+        KubernetesClient client = getClient(request);
         String result;
         PersistentVolume pv = client.persistentVolumes().withName(pvName).get();
-        List<MountedPod> mountedPodList = findAllPVCMountedByPod().getPodSpecMountedVolume();
+        List<MountedPod> mountedPodList = findAllPVCMountedByPod(client).getPodSpecMountedVolume();
 
         if (pv == null) {
             result = pvName + " not found";
