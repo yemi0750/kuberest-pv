@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kuberest
+  namespace: kuberest
+  labels:
+    app: kuberest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kuberest
+  template:
+    metadata:
+      labels:
+        app: kuberest
+    spec:
+      serviceAccount: kuberest-sa
+      serviceAccountName: kuberest-sa
+      containers:
+        - name: kuberest
+          image: yemi0750/kuberest:0.0.1-SNAPSHOT
+          ports:
+            - containerPort: 8080
