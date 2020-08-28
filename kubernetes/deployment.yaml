@@ -19,6 +19,6 @@ spec:
       serviceAccountName: kuberest-sa
       containers:
         - name: kuberest
-          image: yemi0750/kuberest:0.0.1-SNAPSHOT
+          image: yemi0750/kuberest:0.0.3-SNAPSHOT
           ports:
             - containerPort: 8080
