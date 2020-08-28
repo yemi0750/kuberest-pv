@@ -26,6 +26,6 @@ public class SwaggerConfig {
     }
     
     private ApiInfo apiInfo() {
-        return new ApiInfoBuilder().title("Kuberest API").description("Kuberest API Example").build();
+        return new ApiInfoBuilder().title("Kuberest API").description("Unused Kuberest Resource(PV, PVC)를 조회 및 삭제하는 API").build();
     }
 }

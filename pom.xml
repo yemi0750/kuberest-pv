@@ -10,9 +10,9 @@
 	</parent>
 	<groupId>com.cloudzcp</groupId>
 	<artifactId>kuberest</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
-	<name>demo</name>
-	<description>Demo project for Spring Boot</description>
+	<version>0.0.3-SNAPSHOT</version>
+	<name>Ununsed Kubernetes Resource API</name>
+	<description>Unused Kubernetes Resource API</description>
 
 	<properties>
 		<java.version>14</java.version>
@@ -30,6 +30,7 @@
 			<scope>runtime</scope>
 			<optional>true</optional>
 		</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
@@ -47,32 +48,46 @@
   			<artifactId>kubernetes-client</artifactId>
   			<version>4.10.3</version>
 		</dependency>
-		
-		<repositories>
-        	<repository>
-          		<id>jcenter-snapshots</id>
-          		<name>jcenter</name>
-          		<url>https://jcenter.bintray.com/</url>
-        	</repository>
-    	</repositories>
 
-    	<dependency>
-        	<groupId>io.springfox</groupId>
-        	<artifactId>springfox-boot-starter</artifactId>
-        	<version>3.0.0</version>
-    	</dependency>
 		<dependency>
-    		<groupId>com.googlecode.json-simple</groupId>
-    		<artifactId>json-simple</artifactId>
-    		<version>1.1</version>
+			<groupId>io.springfox</groupId>
+			<artifactId>springfox-boot-starter</artifactId>
+			<version>3.0.0</version>
 		</dependency>
+		
+		<!-- https://mvnrepository.com/artifact/org.projectlombok/lombok -->
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<version>1.18.12</version>
+			<scope>provided</scope>
+		</dependency>
+
 	</dependencies>
 
+	<repositories>
+		<repository>
+			<id>jcenter-snapshots</id>
+			<name>jcenter</name>
+			<url>https://jcenter.bintray.com/</url>
+		</repository>
+	</repositories>
+	
 	<build>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>3.1.0</version>
+				<configuration>
+					<show>private</show>
+					<nohelp>true</nohelp>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>
